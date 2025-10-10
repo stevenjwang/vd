@@ -1,5 +1,5 @@
 function camber = Camber_Evaluation(long_vel, yaw_rate, steer_angle_1, steer_angle_2, ...
-                                    static_camber, ccVal_f, ccVal_r)
+                                    static_camber_f, static_camber_r, ccVal_f, ccVal_r)
 
     % --- constants & tunables ---
     roll_grad_deg_per_g = 0.68;
@@ -43,8 +43,8 @@ function camber = Camber_Evaluation(long_vel, yaw_rate, steer_angle_1, steer_ang
 
     % --- assemble ---
     camber        = zeros(4,1);
-    camber(1)     = static_camber + cam_FL      + c_fromcomp(1);
-    camber(2)     = static_camber + cam_FR      + c_fromcomp(2);
-    camber(3)     = static_camber + cam_RL_roll + c_fromcomp(3);
-    camber(4)     = static_camber + cam_RR_roll + c_fromcomp(4);
+    camber(1)     = static_camber_f + cam_FL      + c_fromcomp(1);
+    camber(2)     = static_camber_f + cam_FR      + c_fromcomp(2);
+    camber(3)     = static_camber_r + cam_RL_roll + c_fromcomp(3);
+    camber(4)     = static_camber_r + cam_RR_roll + c_fromcomp(4);
 end

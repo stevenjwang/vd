@@ -2,7 +2,7 @@ function carCell = carConfig()
 
 % car parameters (updated 2/4/21)
 carParams = struct();
-carParams.mass = linspace(166, 170, 3); % not including driver (366 lb) 
+carParams.mass = [168]; % not including driver (366 lb) 
 carParams.driver_weight = 64; %
 carParams.accel_driver_weight = 59; % (130 lb)
 carParams.wheelbase = [62] * 0.0254; % 62 in
@@ -60,7 +60,9 @@ Bparams.max_braking_torque = 840; % total braking torque (Nm)
 
 % tire parameters (updated 5/1/19)
 tireParams = struct();
-tireParams.gamma = [-1]; % camber angle
+tireParams.gamma_f = linspace(0, -1.5, 8); % camber angle
+tireParams.gamma_r = linspace(0, -1.5, 8); % camber angle
+
 tireParams.p_i = [12]; % pressure
 % these parameters are non-iterable
 load('Fx_combined_parameters_run38_30.mat'); % F_x combined magic formula parameters

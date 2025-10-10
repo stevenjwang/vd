@@ -16,7 +16,8 @@ classdef Car
         h_g %cg height
         R_sf %roll stiffness in front
         I_zz %polar moment of inertia, z axis
-        static_gamma %static camber
+        static_gamma_f
+        static_gamma_r %static camber
         static_r_toe
         camber_compliance_f
         camber_compliance_r
@@ -62,7 +63,7 @@ classdef Car
     
     methods
         function obj = Car(mass,wheelbase,weight_dist,track_width,wheel_radius,cg_height,...
-                roll_center_height_front,roll_center_height_rear,R_sf,I_zz,static_gamma,camber_compliance_f,camber_compliance_r,aero,powertrain,tire,ackermann,static_r_toe);
+                roll_center_height_front,roll_center_height_rear,R_sf,I_zz,static_gamma_f,static_gamma_r,camber_compliance_f,camber_compliance_r,aero,powertrain,tire,ackermann,static_r_toe);
             obj.M = mass;
             obj.W_b = wheelbase;
             obj.l_f = wheelbase*weight_dist; % distance from cg to front
@@ -76,7 +77,8 @@ classdef Car
             obj.h_g = cg_height;
             obj.R_sf = R_sf;
             obj.I_zz = I_zz;
-            obj.static_gamma = static_gamma;
+            obj.static_gamma_f = static_gamma_f;
+            obj.static_gamma_r = static_gamma_r;
             obj.aero = aero;
             obj.powertrain = powertrain;
             obj.tire = tire;
@@ -147,7 +149,8 @@ classdef Car
             
 
             %gamma = [obj.static_gamma obj.static_gamma obj.static_gamma obj.static_gamma];
-            gamma = Camber_Evaluation(long_vel, yaw_rate, steer_angle_1, steer_angle_2, obj.static_gamma, obj.camber_compliance_f, obj.camber_compliance_r).';
+            gamma = Camber_Evaluation(long_vel, yaw_rate, steer_angle_1, steer_angle_2, obj.static_gamma_f, obj.static_gamma_r, obj.camber_compliance_f, obj.camber_compliance_r).';
+            
             %disp(gamma);
             %disp("------------");
             
