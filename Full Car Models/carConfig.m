@@ -12,8 +12,13 @@ function [carCell,eventParams] = carConfig()
 
 % car parameters (updated 2/4/21)
 carParams = struct();
+<<<<<<< HEAD
 carParams.mass = [162]; % not including driver (366 lb)
 carParams.driver_weight = 64; %
+=======
+carParams.mass = [162]; % not including driver (366 lb) 
+carParams.driver_weight = 61; %
+>>>>>>> 9f757bd (B26 carConfig update)
 carParams.accel_driver_weight = 59; % (130 lb)
 carParams.wheelbase = [62] * 0.0254; % 62 in
 carParams.weight_dist = [0.512]; % percentage of weight in rear
