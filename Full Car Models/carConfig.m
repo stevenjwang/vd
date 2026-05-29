@@ -85,7 +85,6 @@ carParams.static_rear_ride_height_in  = [-0.25 0 0.25];
 aeroParams = struct();
 aeroParams.cda = [1.48]; % m^2 (1.88)
 aeroParams.cla = 3.969; % m^2 (3.45)
-
 aeroParams.cla_p_deg_p = 0;
 aeroParams.D_p_deg_p = 0;
 
@@ -134,7 +133,7 @@ tireParams = struct();
 tireParams.gamma_f = -1; %linspace(0, -1.5, 8); % camber angle
 tireParams.gamma_r = -1; %linspace(0, -1.5, 8); % camber angle
 
-tireParams.p_i = [12]; % pressure
+tireParams.p_i = [11]; % pressure
 % these parameters are non-iterable
 load('Fx_combined_parameters_run38_30.mat'); % F_x combined magic formula parameters
 tireParams.Fx_parameters = cell2mat(Xbestcell);
