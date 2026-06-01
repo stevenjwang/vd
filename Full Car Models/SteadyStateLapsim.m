@@ -9,117 +9,63 @@
 % 3) results are in the comp object, which is stored in the corresponding
 % car object. Index into carCell to get the car you want, then open the
 % comp object.
+% Lapsim2 (Optimized DOE Engine)
+% Main steady-state lapsim script optimized for large-scale Latin Hypercube Sampling.
+
 clear
 setup_paths
-carCell = carConfig(); %generate all cars to sim over
+
+% 1. Generate all cars to sim over using the LHS Parameters Loop
+carCell = carConfig(); 
 numCars = size(carCell,1);
-time = struct();time.prev = 0; time.curr = 0;
-tic
-% Set numWorkers to number of cores for better performance
-numWorkers = 0;
-if numWorkers ~= 0
-    disp('The parallel toolbox takes a few minutes to start.')
-    disp('Set numWorkers to 0 for single-car runs')
+
+% 2. Setup Parallel Pool
+% Let MATLAB handle the workers dynamically. Hardcoding numWorkers = 16 
+% can crash if a teammate runs this on an 8-core laptop.
+poolobj = gcp('nocreate'); % Check if pool exists
+if isempty(poolobj)
+    disp('Starting parallel pool. This takes a moment...');
+    parpool(); 
 end
 
-paramsArr = {};
+fprintf('Starting DOE with %d car setups.\n', numCars);
 
-for i = 1:numCars
-    car = carCell{i,1};
-    accelCar = carCell{i,2};
-    fprintf("car %d of %d - starting g-g\n",[i numCars]);
-    paramsArr{i,1} = gg2(car,numWorkers);
-    fprintf("car %d of %d - g-g complete\n",[i numCars]);
-    time.curr = floor(toc);
-    fprintf("Stage Time: %d s; Total time elapsed: %d s\n",[time.curr-time.prev time.curr]);
-    time.prev = time.curr;
-end
+% 1. Pre-allocate TWO separate 1D cell arrays
+carOut_main  = cell(numCars, 1); 
+carOut_accel = cell(numCars, 1);
 
-carOut = carCell;
-
-%% EVENTS
-
+tic;
 parfor i = 1:numCars
+    % Pull from carCell (broadcast/sliced automatically)
     car = carCell{i, 1};
     accelCar = carCell{i, 2};
-    car = makeGG(paramsArr{i,1},car); %post-processes gg data and stores in car
-    comp = Events2(car,accelCar);
-    comp.calcTimes();       %run events and calc points
-    car.comp = comp;        %store in array
-    carOut{i,1} = car; %put updated car back into array. Matlab is pass by value, not pass by reference
-    fprintf("car %d of %d - points calculated\n",[i numCars]);
+    
+    % --- Step 1 & 2: Physics & Envelope ---
+    raw_gg_params = gg2(car, 0); 
+    car = makeGG(raw_gg_params, car); 
+    
+    % --- Step 3: Integration ---
+    comp = EventsDOE(car, accelCar);
+    comp.calcTimes();       
+    
+    % --- Step 4: Storage in separate "buckets" ---
+    car.comp = comp;        
+    
+    % Use single subscripts {i} for both to keep the analyzer happy
+    carOut_main{i}  = car;      
+    carOut_accel{i} = accelCar; 
+    
+    fprintf('Completed Setup %d of %d\n', i, numCars);
 end
 
-time.curr = floor(toc);
-fprintf("Stage Time: %d s; Total time elapsed: %d s\n",[time.curr-time.prev time.curr]);
-fprintf("done\n");
-carCell = carOut;
-%% Saving
-save('DesignBinderFinalDriveSweep2.mat','carCell');
+% 2. Zip them back together into the 16x2 structure the RSM needs
+carCell = [carOut_main, carOut_accel]; 
 
-%% Points Plotting
-for i = numCars
-    car = carCell{i,1};
-    disp("car " + i + "points: " + num2str(carCell{i,1}.comp.points.total));
-end
+% =========================================================================
 
-% options
-display_point_values_above_bar_flag = true;
-
-label_cars_automatically_flag = true;
-
-%automatic car labeling
-automatic_label_name = 'Mass (kg), Cg height (m)';
-%automatic_label = @(car) (1/2+car.powertrain.G_d2_driving)/(1/2-car.powertrain.G_d2_driving);%TBR
-%automatic_label = @(car) max(car.powertrain.torque_fn(2,:).*car.powertrain.torque_fn(1,:))/5252;%Car mass
-%automatic_label = @(car) num2str(car.powertrain.final_drive * 11) + "/11" ;%Sprocket teeth
-%automatic_label = @(car) car.tire.gamma;%Car cda
-automatic_label = @(car) num2str(car.M-68) + ", " + num2str(car.h_g);
+total_time = toc;
+fprintf('\n--- DOE COMPLETE ---\n');
+fprintf('Total time elapsed: %.1f seconds (%.2f minutes)\n', total_time, total_time/60);
+fprintf('Average time per setup: %.2f seconds\n', total_time/numCars);
 
 
-% 1 to select, 0 to exclude
-selected_categories = find([ ...
-     1 ... %Accel
-     1 ... %Autocross
-     1 ... %Endurance
-     1 ... %Skidpad
-     1 ... %Total  
-]);
-
-plot_lapsim_points(carCell, display_point_values_above_bar_flag, true,...
-    [], automatic_label_name, automatic_label, selected_categories);
-%% Car Plotting
-
-% select desired car object
-desiredCarIndex = 2;
-car = carCell{desiredCarIndex,1};
-
-% set desired plots to 1
-plot1 = 0; % velocity-dependent g-g diagram scatter plot
-plot2 = 1; % velocity-dependnt g-g diagram surface
-plot3 = 0; % max accel for given velocity and lateral g w/ scattered interpolant
-plot4 = 0; % max braking for given velocity and lateral w/ scattered interpolant
-plot5 = 0; % 2D g-g diagram for velocity specified below (gg_vel)
-
-g_g_vel = [12 14 26]; % can input vector to overlay different velocities
-
-plot_choice = [plot1 plot2 plot3 plot4 plot5];
-plotter(car,g_g_vel,plot_choice);
-
-%% Event Plotting
-
-% select desired comp object
-comp = carCell{4,1}.comp;
-
-% set desired plots to 1
-plot1 = 0; % autocross track distance vs curvature
-plot2 = 0; % endurance track distance vs curvature
-plot3 = 0; % max possible velocity for given radius
-plot4 = 0; % max possible long accel for given velocity
-plot5 = 0; % accel event longitudinal velocity vs time
-plot6 = 0; % accel event longitudinal accel vs time
-plot7 = 1; % autocross gear shifts
-plot8 = 0; % autocross slip angle vs distance
-
-plot_choice = [plot1 plot2 plot3 plot4 plot5 plot6 plot7 plot8];
-event_plotter(comp,plot_choice);

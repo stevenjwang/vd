@@ -1,28 +1,32 @@
 function carCell = carConfig()
-
+sampling_type = 'LHS';
+num_samples = 512;
 % car parameters (updated 2/4/21)
 carParams = struct();
-carParams.mass = [165.832]; % not including driver (378 lb)
+carParams.mass = [163 170 155]; % not including driver (378 lb)
 carParams.driver_weight = 68; % (150 lb)
 carParams.accel_driver_weight = 52; % (150 lb)
 carParams.wheelbase = [62] * 0.0254; % 62 in
-carParams.weight_dist = [0.512]; % percentage of weight in rear
-carParams.track_width = 1.1938; % (47 in)
+carParams.weight_dist = [0.52 0.6 0.4]; % percentage of weight in rear
+carParams.track_width = [1.32]; % (47 in)
 carParams.wheel_radius = 0.1956; % loaded 
 % radius (7.7 in)
-carParams.cg_height = [0.30269] % (12 in)
+carParams.cg_height = [11.7 10 12] *0.0254;
 carParams.roll_center_height_front = 0.0254; % (1 in)
 carParams.roll_center_height_rear = 0.0889; % (3.5 in)
-carParams.R_sf = [0.385]; % proportion of roll stiffness in front (not same as LLTD)
+carParams.R_sf = [0.385 0.3 0.6]; % proportion of roll stiffness in front (not same as LLTD)
 carParams.I_zz = [83.28];%, 82.28]; %kg-m^2
 carParams.ackermann = [1]; %expressed as exponent for current ackermann curve
-carParams.camber_compliance = [0.125/1334];
+carParams.camber_compliance = [0];
 
 % aero parameters (updated 6/6/22)
 aeroParams = struct();
-aeroParams.cda = 1.88; % m^2
-aeroParams.cla = 3.45; % m^2
-aeroParams.distribution = 0.42; % proportion of downforce in front
+aeroParams.cda = [1.41]; % m^2
+aeroParams.cla = [3.45]; % m^2
+aeroParams.distribution = 0.47; % proportion of downforce in front
+
+aeroParams.accel_cda = [0.855 1.41]; % low drag
+aeroParams.accel_cla = [2.37 3.45]; % 
 
 % KTM engine parameters (updated 5/1/19)
 eParams = struct();
@@ -36,7 +40,7 @@ eParams.shift_time = 0.050; % seconds FOR UPSHIFT ONLY; 150ms for downshift
 
 % drivetrain parameters (updated 10/14/23)
 DTparams = struct();
-DTparams.final_drive = [37/11];%[25/11, 43/11, 50/11]; % drivetrain sprocket ratio
+DTparams.final_drive = [33/11 27/11 35/11];%[25/11, 43/11, 50/11]; % drivetrain sprocket ratio
 DTparams.drivetrain_efficiency = 0.87; % scales torque value
 DTparams.G_d1 = 0; % differential torque transfer offset due to internal friction
 DTparams.G_d2_overrun = 0; % differential torque transfer gain in overrun (not used right now)
@@ -45,19 +49,19 @@ DTparams.G_d2_driving = (TBR-1)./(2+2*TBR); % differential torque transfer gain 
 
 % brake parameters (updated 8/14/23)
 Bparams = struct();
-Bparams.brake_distribution = 0.7;% proportion of brake torque applied to front
-Bparams.max_braking_torque = 840; % total braking torque (Nm)
+Bparams.brake_distribution = [0.7];% proportion of brake torque applied to front
+Bparams.max_braking_torque = [840]; % total braking torque (Nm)
 
 % tire parameters (updated 5/1/19)
 tireParams = struct();
-tireParams.gamma = [0]; % camber angle
-tireParams.p_i = [12]; % pressure
+tireParams.gamma = [-1 -2 0]; % camber angle
+tireParams.p_i = [10 11 12]; % pressure
 % these parameters are non-iterable
 load('Fx_combined_parameters_run38_30.mat'); % F_x combined magic formula parameters
 tireParams.Fx_parameters = cell2mat(Xbestcell);
 load('Lapsim_Fy_combined_parameters_1965run15.mat'); % F_y combined magic formula parameters
 tireParams.Fy_parameters = cell2mat(Xbestcell);
-tireParams.friction_scaling_factor = 1.05*0.55; % scales tire forces to account for test/road surface difference
+tireParams.friction_scaling_factor = [0.7]; % scales tire forces to account for test/road surface difference
 
 % cell array of gridded parameters
-[carCell] = parameters_loop(carParams,aeroParams,eParams,DTparams,Bparams,tireParams);
+[carCell] = parameters_loop(carParams,aeroParams,eParams,DTparams,Bparams,tireParams, sampling_type, num_samples);

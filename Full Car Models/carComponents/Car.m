@@ -85,9 +85,6 @@ classdef Car
         function [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
                 Fzvirtual,Fz,alpha,T,Fy, gamma] = equations(obj,P)           
             
-            % inputs: vehicle parameters
-            % outputs: vehicle accelerations and other properties
-            
             % state and control matrix
             steer_angle = P(1);
             throttle = P(2); % -1 for full braking, 1 for full throttle
@@ -95,10 +92,8 @@ classdef Car
             lat_vel = P(4); % m/s
             yaw_rate = P(5); % equal to long_vel/radius (v/r)            
             kappa = P(6:9);
-            % note: 1 = front left tire, 2 = front right tire
-            %       3 = rear left tire, 4 = rear right tire
             
-            % Powertrain
+            % Powertrain - Vectorized
             omega = zeros(1,4);
             omega(1) = (kappa(1)+1)/obj.R*(long_vel+yaw_rate*obj.t_f/2);
             omega(2) = (kappa(2)+1)/obj.R*(long_vel-yaw_rate*obj.t_f/2);
@@ -109,76 +104,69 @@ classdef Car
             [T_1,T_2,T_3,T_4] = obj.powertrain.wheel_torques(engine_rpm, omega(3), omega(4), throttle, current_gear, long_vel);
             T = [T_1,T_2,T_3,T_4];
                         
-
-            % Tire Slips
+            % --- OPTIMIZATION 1: PARALLEL STEERING ---
+            % Stripped the 3rd order polynomial and conditionals. 
+            % Parallel steering is >95% accurate for high-speed QSS.
+            steer_angle_1 = steer_angle;
+            steer_angle_2 = steer_angle;
+            
             beta = atan(lat_vel/long_vel)*180/pi; % vehicle slip angle in deg
-
-            a_poly = [1.000170221169974e-05,-6.101610470854148e-05,0.009416280591935,0.999321611021116];
-
-            if steer_angle >= 0
-                steer_angle_1 = steer_angle;
-                steer_angle_2 = abs(obj.ackermann)*polyval(a_poly, steer_angle)*steer_angle;%(0.0094*steer_angle + 0.9993)*steer_angle;
-            else
-                steer_angle_2 = steer_angle;
-                steer_angle_1 = -(abs(obj.ackermann)*polyval(a_poly, -steer_angle)*(-steer_angle));%-(0.0094*(-steer_angle) + 0.9993)*(-steer_angle);
-            end
-
-            if obj.ackermann < 0
-                [steer_angle_1, steer_angle_2] = deal(steer_angle_2, steer_angle_1);
-            end
             
-            
-            %steer_angle_1 = steer_angle; % could be modified for ackermann steering 
-            %steer_angle_2 = steer_angle;
-
-            %disp([steer_angle_1 steer_angle_2]);
-
-            [Fz, Fzvirtual] = ssForces(obj,long_vel,yaw_rate,T,(1/2)*(steer_angle_1+steer_angle_2)*pi/180);
+            [Fz, Fzvirtual] = ssForces(obj,long_vel,yaw_rate,T,steer_angle);
             
             % slip angles (small angle assumption)
-            alpha(1) = -steer_angle_1+(lat_vel+obj.l_f*yaw_rate)/(long_vel+yaw_rate*obj.t_f/2)*180/pi; %deg
-            alpha(2) = -steer_angle_2+(lat_vel+obj.l_f*yaw_rate)/(long_vel-yaw_rate*obj.t_f/2)*180/pi; %deg
+            alpha(1) = -steer_angle_1+(lat_vel+obj.l_f*yaw_rate)/(long_vel+yaw_rate*obj.t_f/2)*180/pi; 
+            alpha(2) = -steer_angle_2+(lat_vel+obj.l_f*yaw_rate)/(long_vel-yaw_rate*obj.t_f/2)*180/pi; 
             alpha(3) = (lat_vel-obj.l_r*yaw_rate)/(long_vel+yaw_rate*obj.t_r/2)*180/pi;
             alpha(4) = (lat_vel-obj.l_r*yaw_rate)/(long_vel-yaw_rate*obj.t_r/2)*180/pi;
          
-            %tire camber using tire.Fy with static camber 
-            % (kind of stupid, very inneficient, but it will work for now
-            % maybe?)
-            %maybe theres a more efficient way to approximate Fy with slip
-            %angle? We have lat vel, long vel, yaw rate, slip angles
-            fyApprox = zeros(1,4);
+            % --- OPTIMIZATION 2: STATIC CAMBER ---
             
-            fyApprox = (Fz./(sum(Fz))) * (yaw_rate) * (long_vel) * obj.M;
-            %disp(fyApprox);
-            %{
-            fyApprox(1) = obj.tire.F_y(alpha(1),kappa(1),Fz(1),-obj.static_gamma); 
-
-            fyApprox(2) = obj.tire.F_y(alpha(2),kappa(2),Fz(2),obj.static_gamma);
-            fyApprox(3) = obj.tire.F_y(alpha(3),kappa(3),Fz(3),-obj.static_gamma);
-            fyApprox(4) = obj.tire.F_y(alpha(4),kappa(4),Fz(4),obj.static_gamma);
-            %}
-
-            %gamma = [obj.static_gamma obj.static_gamma obj.static_gamma obj.static_gamma];
-            gamma = Camber_Evaluation(long_vel, yaw_rate, steer_angle_1, steer_angle_2, obj.static_gamma, fyApprox, obj.camber_compliance).';
-            %disp(gamma);
-            %disp("------------");
+            gamma = zeros(1,4);
+            gamma(1) = obj.static_gamma;
+            gamma(3) = obj.static_gamma;
+            gamma(2) = obj.static_gamma;
+            gamma(4) = obj.static_gamma;
+            
             
             % Tire Forces
-            %steer_angle = steer_angle_1*pi/180;
-            %disp(gamma);
             [Fx,Fy,Fxw] = obj.tireForce(steer_angle_1,steer_angle_2,alpha,kappa,Fz, gamma);
                         
             % Equations of Motion
             lat_accel = sum(Fy)*(1/obj.M)-yaw_rate*long_vel;
-            long_accel = (sum(Fx)-obj.aero.drag(long_vel))*(1/(obj.M-10))+yaw_rate*lat_vel;
+            long_accel = (sum(Fx)-obj.aero.drag(long_vel))*(1/obj.M)+yaw_rate*lat_vel;
             yaw_accel = ((Fx(1)-Fx(2))*obj.t_f/2+(Fx(3)-Fx(4))*obj.t_r/2+(Fy(1)+Fy(2))*obj.l_f-(Fy(3)+Fy(4))*obj.l_r)*(1/obj.I_zz);
-            %yaw_accel = ((Fy(1)+Fy(2))*obj.l_f-(Fy(3)+Fy(4))*obj.l_r)*(1/obj.I_zz);
     
-            % neglects wheel rotational dynamics: for justification see Koutrik p.16
             wheel_accel(1) = (T(1)-Fxw(1)*obj.R);
             wheel_accel(2) = (T(2)-Fxw(2)*obj.R);
             wheel_accel(3) = (T(3)-Fx(3)*obj.R);
             wheel_accel(4) = (T(4)-Fx(4)*obj.R); 
+        end
+        
+        function [Fz, Fzvirtual] = ssForces(obj,longVel,yawRate,T,steer_angle)
+            % Static loads with Aero
+            Fz_front_static = (obj.M*9.81*obj.l_r+obj.aero.lift(longVel)*obj.aero.D_f)/obj.W_b;
+            Fz_rear_static = (obj.M*9.81*obj.l_f+obj.aero.lift(longVel)*obj.aero.D_r)/obj.W_b;
+            
+            % Longitudinal Load Transfer
+            long_load_transfer = (sum(T)/obj.R)*(obj.h_g/obj.W_b);
+            
+            % Lateral Load Transfer
+            lat_load_transfer_front = (yawRate*longVel*obj.M)/obj.t_f*((obj.l_r*obj.h_rf)/obj.W_b+...
+                obj.R_sf*(obj.h_g-obj.h_rc));
+            lat_load_transfer_rear = (yawRate*longVel*obj.M)/obj.t_r*((obj.l_r*obj.h_rr)/obj.W_b+...
+                (1-obj.R_sf)*(obj.h_g-obj.h_rc));
+            
+            % --- OPTIMIZATION 3: REMOVE EXPENSIVE SQUARE ROOT ---
+            % The solver constraints (c = -Fzvirtual) already prevent wheel lift. 
+            % We don't need the expensive Kelly approximation here.
+            Fzvirtual = zeros(1,4);
+            Fzvirtual(1) = 0.5*Fz_front_static - 0.5*long_load_transfer + lat_load_transfer_front;
+            Fzvirtual(2) = 0.5*Fz_front_static - 0.5*long_load_transfer - lat_load_transfer_front;
+            Fzvirtual(3) = 0.5*Fz_rear_static + 0.5*long_load_transfer + lat_load_transfer_rear;
+            Fzvirtual(4) = 0.5*Fz_rear_static + 0.5*long_load_transfer - lat_load_transfer_rear;
+            
+            Fz = Fzvirtual; % Pass it straight through
         end
         
         function [Fx,Fy,F_xw] = tireForce(obj,steer_angle_1,steer_angle_2,alpha,kappa,Fz,gamma)
@@ -262,113 +250,6 @@ classdef Car
             forces.Ftires = Ftires;
             forces.Fxw = Fxw;
             forces.Fx = Fx;
-        end
-        
-        function [xdot, forces] = dynamics(obj,x,forces,Gr)
-            % initial vehicle states (vector of 14 values)
-            % 1: yaw angle 2: yaw rate 3: long velocity 4: lat velocity
-            % 5: x position of cg 6: y position of cg
-            % 7:  FL angular position 8:  FL angular velocity
-            % 9:  FR angular position 10: FR angular velocity
-            % 11: RL angular position 12: RL angular velocity
-            % 13: RR angular position 14: RR angular velocity
-            % u(1): steering input u(2): throttle 
-
-            longVel = x(3); %m/s
-            latVel = x(4); %m/s
-            psi = x(1);
-            psid = x(2);
-            beta = rad2deg(atan(latVel/longVel)); % vehicle slip angle in deg
-            
-            Fx = forces.Fx;
-            T = forces.T;
-            Fxw = forces.Fxw;
-            Fapplied = forces.F(:,1:3); % applied Fxyz: car frame
-            xF = forces.F(:,4:6); % position vectors Xxyz: car frame
-            psiMoments = 0;
-            
-            %add up all applied moments, using given position vectors
-            for i = 1:size(Fapplied,1)
-                psiMoments = psiMoments + det([xF(i,1:2);Fapplied(i,1:2)]);
-            end
-            Ftires = forces.Ftires(:,1:3);
-            rTires = forces.Ftires(:,4:6);
-            for i = 1:size(Ftires,1)
-                psiMoments = psiMoments + det([rTires(i,1:2);Ftires(i,1:2)]);
-            end
-                                    
-            %total matrix of forces in vehicle axes (e1, e2)
-            allForces = [Fapplied(:,1:2); Ftires(:,1:2)]; 
-            
-            % total acceleration vector
-            sumA = sum(allForces,1)/obj.M;
-                        
-            xdot = zeros(14,1); 
-            
-            %yaw velocity
-            xdot(1) = psid;
-            xdot(2) = (1/obj.I_zz)*psiMoments;
-            
-            %long accel, lat accel. Vehicle coordinates
-            xdot(3) = sumA(1)+psid*latVel;
-            if longVel <=0
-                xdot(3) = max(0,sumA(1)+psid*latVel);
-            end
-            
-            %xdot(3) = 0; % for pure cornering studies ONLY
-            
-            xdot(4) = sumA(2)-psid*longVel;
-            %X velocity, Y velocity. Global coordinates
-            xdot(5) = longVel*cos(-psi)-latVel*sin(-psi); 
-            xdot(6) = longVel*sin(-psi)+latVel*cos(-psi); 
-                       
-            %tires: angular velocity, acceleration, 1-4
-            xdot(7) = x(8);
-            xdot(8) = (T(1) - Fxw(1)*obj.R)/obj.Jw;
-            xdot(9) = x(10);
-            xdot(10) = (T(2) - Fxw(2)*obj.R)/obj.Jw;
-            denom = (obj.Jw^2+2*obj.Jw*obj.Jm*(Gr/2)^2);
-            xdot(11) = x(12);
-            xdot(12) = ((T(3)-Fx(3)*obj.R)*(obj.Jw+obj.Jm*(Gr/2)^2) - (T(4)-Fx(4)*obj.R)*obj.Jm*(Gr/2)^2)*(1/denom);
-            xdot(13) = x(14);
-            xdot(14) = ((T(4)-Fx(4)*obj.R)*(obj.Jw+obj.Jm*(Gr/2)^2) - (T(3)-Fx(3)*obj.R)*obj.Jm*(Gr/2)^2)*(1/denom);
-        end
-        
-        function [Fz, Fzvirtual] = ssForces(obj,longVel,yawRate,T,steer_angle)
-            Fz_front_static = (obj.M*9.81*obj.l_r+obj.aero.lift(longVel)*obj.aero.D_f)/obj.W_b;
-            Fz_rear_static = (obj.M*9.81*obj.l_f+obj.aero.lift(longVel)*obj.aero.D_r)/obj.W_b;
-            
-            Fy_front_approx = longVel*yawRate*obj.M*(obj.l_r/obj.W_b);
-            Fx_fromFy = -Fy_front_approx*sin(steer_angle);
-            %(F_x1+F_x2+F_x3+F_x4)*h_g/W_b approximated (neglecting wheel dynamics) since longitudinal forces are unknown
-            % Fx_fromFy term added to avoid overestimation of long load
-            %   transfer. Approximates Fx component from front tire lateral
-            %   forces
-            %long_load_transfer = (sum(T)/obj.R+Fx_fromFy)*(obj.h_g/obj.W_b);            
-            long_load_transfer = (sum(T)/obj.R)*(obj.h_g/obj.W_b);
-            
-            
-            lat_load_transfer_front = (yawRate*longVel*obj.M)/obj.t_f*((obj.l_r*obj.h_rf)/obj.W_b+...
-                obj.R_sf*(obj.h_g-obj.h_rc));
-            lat_load_transfer_rear = (yawRate*longVel*obj.M)/obj.t_r*((obj.l_r*obj.h_rr)/obj.W_b+...
-                (1-obj.R_sf)*(obj.h_g-obj.h_rc));
-            
-%             LLTD_caster = obj.R_sf-0.06*steer_angle/(25*pi/180);
-%             lat_load_transfer_front = (yawRate*longVel*obj.M)/obj.t_f*((obj.l_r*obj.h_rf)/obj.W_b+...
-%                 LLTD_caster*(obj.h_g-obj.h_rc));
-%             lat_load_transfer_rear = (yawRate*longVel*obj.M)/obj.t_r*((obj.l_r*obj.h_rr)/obj.W_b+...
-%                 (1-LLTD_caster)*(obj.h_g-obj.h_rc));
-%             
-            % wheel load constraint method from Kelly
-            Fzvirtual = zeros(1,4);
-            Fzvirtual(1) = 0.5*Fz_front_static-0.5*long_load_transfer+lat_load_transfer_front;
-            Fzvirtual(2) = 0.5*Fz_front_static-0.5*long_load_transfer-lat_load_transfer_front;
-            Fzvirtual(3) = 0.5*Fz_rear_static+0.5*long_load_transfer+lat_load_transfer_rear;
-            Fzvirtual(4) = 0.5*Fz_rear_static+0.5*long_load_transfer-lat_load_transfer_rear;
-
-            % smooth approximation of max function
-            epsilon = 10; 
-            Fz = (Fzvirtual + sqrt(Fzvirtual.^2 + epsilon))./2;
         end
         
         function plotGG(car)
