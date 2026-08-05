@@ -59,7 +59,7 @@ plot(time_can, yaw_rate_meas_rads, 'LineWidth', 1.5, 'DisplayName', 'Measured');
 hold on;
 plot(time_can, yaw_rate_kinematic_rads, 'LineWidth', 1.2, 'DisplayName', 'Kinematic (Steering Input)');
 plot(time_can, ideal_yaw_rate_rads, 'LineWidth', 1.2, 'DisplayName', 'Theoretical (Linear Tire Model)');
-plot(time_can, yaw_rate_lataccel_rads, 'LineWidth', 1.2, 'DisplayName', 'a_y/V_x');
+plot(time_can, yaw_rate_lataccel_rads, 'LineWidth', 1.2, 'DisplayName', 'a_y/v_x');
 
 ylabel('Yaw Rate (rad/s)');
 title('Yaw Rates');
@@ -80,7 +80,7 @@ plot(time_can, sideslip_rate_rads, 'LineWidth', 1.2, 'DisplayName', 'Sideslip Ra
 hold on;
 yline(0, 'LineWidth', 1.5); % The target steady-state line (Zero)
 xlabel('Time (s)');
-ylabel('Beta Dot (rad/s)');
-title('Sideslip Rate of Change (\beta^{.})');
+ylabel('\beta^{x} (rad/s)');
+title('\beta^{.} Sideslip Rate of Change');
 legend('Location', 'best');
 grid on;
