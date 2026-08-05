@@ -31,10 +31,10 @@ speed_ms(speed_ms < 0.1) = 0.1;
 
 %% --- Understeer & Theoretical Yaw Calculations (Steady-State Approximations) ---
 % Linear Yaw Rate w/ K_us (compare to pure kinematic)
-[understeer_angle_deg, yaw_rate_theory_rads, K_us_scalar_deg_g, K_us_inst_deg_g] = ...
+[understeer_angle_deg, ideal_yaw_rate_rads, K_us_scalar_deg_g, K_us_inst_deg_g] = ...
     understeer_yaw_telemetry_calc(steer_angle_deg, steering_ratio, speed_ms, wheelbase_m, lat_accel_ms2);
 
-fprintf('Extracted Vehicle Understeer Gradient (K_us): %.2f deg/g\n', K_us_scalar_deg_g);
+fprintf('Extracted Understeer Gradient (K_us): %.2f deg/g\n', K_us_scalar_deg_g);
 
 % Convert Road Wheel Angle to Radians for calculation
 road_wheel_rad = deg2rad(steer_angle_deg ./ steering_ratio);
@@ -48,18 +48,18 @@ yaw_rate_kinematic_rads = (speed_ms .* tan(road_wheel_rad)) ./ wheelbase_m;
 yaw_rate_lataccel_rads = lat_accel_ms2 ./ speed_ms;
 
 % Sideslip rate of change (transient)
-% B = a_y/V_x - true yaw rate
+% B = a_y / v_x - measured yaw rate
 sideslip_rate_rads = yaw_rate_lataccel_rads - yaw_rate_meas_rads;
 
 %% --- Plots ---
 
 % Subplot 1: Yaw Rate Overlays
 subplot(3,1,1);
-plot(time_can, yaw_rate_meas_rads, 'LineWidth', 1.5, 'DisplayName', 'IMU Measured');
+plot(time_can, yaw_rate_meas_rads, 'LineWidth', 1.5, 'DisplayName', 'Measured');
 hold on;
-plot(time_can, yaw_rate_kinematic_rads, 'LineWidth', 1.2, 'DisplayName', 'Kinematic (Driver Intent)');
-plot(time_can, yaw_rate_theory_rads, 'LineWidth', 1.2, 'DisplayName', 'Theoretical (Linear Tire Model)');
-plot(time_can, yaw_rate_lataccel_rads, 'LineWidth', 1.2, 'DisplayName', 'a_y/V_x Approx');
+plot(time_can, yaw_rate_kinematic_rads, 'LineWidth', 1.2, 'DisplayName', 'Kinematic (Steering Input)');
+plot(time_can, ideal_yaw_rate_rads, 'LineWidth', 1.2, 'DisplayName', 'Theoretical (Linear Tire Model)');
+plot(time_can, yaw_rate_lataccel_rads, 'LineWidth', 1.2, 'DisplayName', 'a_y/V_x');
 
 ylabel('Yaw Rate (rad/s)');
 title('Yaw Rates');
@@ -76,7 +76,7 @@ grid on;
 
 % Subplot 3: Sideslip Rate of Change (Transient)
 subplot(3,1,3);
-plot(time_can, sideslip_rate_rads, 'LineWidth', 1.2, 'Color', '#D95319', 'DisplayName', 'Beta Dot');
+plot(time_can, sideslip_rate_rads, 'LineWidth', 1.2, 'DisplayName', 'Sideslip Rate of Change');
 hold on;
 yline(0, 'LineWidth', 1.5); % The target steady-state line (Zero)
 xlabel('Time (s)');
