@@ -1,5 +1,6 @@
-function [understeer_angle_deg, ideal_yaw_rate_rads, K_us_scalar_deg_g, K_us_inst_deg_g] = understeer_yaw_telemetry_calc(steer_wheel_deg, steering_ratio, speed_ms, wheelbase_m, lat_accel_ms2)
-% understeer_yaw_calc calculates instantaneous and scalar understeer gradients and theoretical yaw rate
+function [understeer_angle_deg, ideal_yaw_rate_rads, K_us_scalar_deg_g] = understeer_yaw_telemetry_calc(time_s, steer_wheel_deg, steering_ratio, speed_ms, wheelbase_m, lat_accel_ms2)
+% understeer_yaw_telemetry_calc calculates understeer gradients and theoretical yaw rate.
+% Requires a time_s vector for exact numerical differentiation.
 
     g_ms2 = 9.80665;
 
@@ -9,59 +10,38 @@ function [understeer_angle_deg, ideal_yaw_rate_rads, K_us_scalar_deg_g, K_us_ins
 
     % 2. Speed threshold protection
     speed_safe_ms = speed_ms;
-    speed_safe_ms(abs(speed_safe_ms) < 0.5) = NaN; 
+    speed_safe_ms(abs(speed_safe_ms) < 5.0) = NaN; % Below 5 m/s, kinematics dominate over dynamics
 
-    % 3. Calculate Ackermann Steer Angle using Lateral Acceleration (Rad)
+    % 3. Calculate Ackermann Steer Angle (Rad)
     ackermann_angle_rad = (wheelbase_m .* lat_accel_ms2) ./ (speed_safe_ms .^ 2);
 
-    % 4. Calculate Instantaneous Understeer Angle
+    % 4. Calculate Understeer Angle
     understeer_angle_rad = road_wheel_rad - ackermann_angle_rad;
-    understeer_angle_deg = rad2deg(understeer_angle_rad);
+    understeer_angle_deg = rad2deg(understeer_angle_rad);    
 
-    % % 5. Calculate Instantaneous K_us (Deg/g)
-    % % INSTANTANEOUS: d(understeer angle) / d(a_y)?
-    % lat_accel_safe_ms2 = lat_accel_ms2;
-    % lat_accel_safe_ms2(abs(lat_accel_safe_ms2) < 0.2) = NaN; 
-    % 
-    % K_us_inst_rad_ms2 = understeer_angle_rad ./ lat_accel_safe_ms2;
-    % K_us_inst_deg_g = rad2deg(K_us_inst_rad_ms2) .* g_ms2;
+    % 5. Calculate scalar K_us via linear regression
+    % Calculate signal rates using the exact time vector to find steady-state conditions
+    steer_velocity_deg_s = gradient(steer_wheel_deg, time_s);
+    lat_jerk_ms3 = gradient(lat_accel_ms2, time_s);
 
+    % --- Linear tire window filters--EDIT ---
+    cond_speed = speed_ms > 6; % filter out kinematic-dominant states
+    cond_ay_max = abs(lat_accel_ms2) < 7.7; % 0.5 * skidpad lat. accel from comp (9.125 m radius)
+    cond_ss_steer = abs(steer_velocity_deg_s) < 40.0; 
+    cond_ss_ay = abs(lat_jerk_ms3) < 2.0; 
     
-
-    % 5. Calculate Instantaneous K_us (Deg/g)
-    % Calculated as d(understeer angle) / d(a_y) using discrete gradients
+    ss_pts = cond_speed & cond_ay_max & cond_ss_steer & cond_ss_ay;
     
-    % Get the rate of change between data points
-    d_understeer_rad = gradient(understeer_angle_rad);
-    d_lat_accel = gradient(lat_accel_ms2);
-    
-    % Prevent division by near-zero changes in lateral accel (avoids noise/infinity spikes)
-    d_lat_accel_safe = d_lat_accel;
-    d_lat_accel_safe(abs(d_lat_accel_safe) < 1e-3) = NaN; 
-    
-    % Calculate the tangent slope
-    K_us_inst_rad_ms2 = d_understeer_rad ./ d_lat_accel_safe;
-    
-    % Convert rad/(m/s^2) to deg/g
-    K_us_inst_deg_g = rad2deg(K_us_inst_rad_ms2) .* g_ms2;
-
-
-
-    % 6. Calculate Overall Scalar K_us via Linear Regression
-    % CHANGE filters for cornering events where tires are in linear range (1.5 m/s^2 to 5.0 m/s^2)
-    % something like abs(yaw_rate) < 2
-    valid_idx = (abs(lat_accel_ms2) > 1.5) & (abs(lat_accel_ms2) < 5.0) & (speed_ms > 3.0); 
-    
-    if sum(valid_idx) > 20
-        poly_fit_coeffs = polyfit(lat_accel_ms2(valid_idx), understeer_angle_rad(valid_idx), 1);
-        K_us_scalar_SI = poly_fit_coeffs(1); 
+    if sum(ss_pts) > 50 
+        robust_fit_coeffs = robustfit(lat_accel_ms2(ss_pts), understeer_angle_rad(ss_pts));
+        K_us_scalar_SI = robust_fit_coeffs(2);
     else
-        warning('Insufficient steady-state cornering data for regression. Defaulting K_us to 0 (Neutral Steer).');
-        K_us_scalar_SI = 0;
+        warning('Insufficient steady-state linear cornering data. Defaulting K_us to B26 target (0.15).');
+        K_us_scalar_SI = 0.15;
     end
     
     K_us_scalar_deg_g = rad2deg(K_us_scalar_SI) * g_ms2;
 
-    % 7. Calculate Theoretical Yaw Rate (rad/s)
+    % 6. Calculate Theoretical Yaw Rate (rad/s)
     ideal_yaw_rate_rads = (speed_ms .* road_wheel_rad) ./ (wheelbase_m + (K_us_scalar_SI .* (speed_ms .^ 2)));
 end
