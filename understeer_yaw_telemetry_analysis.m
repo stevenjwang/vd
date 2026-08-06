@@ -1,13 +1,13 @@
 % understeer_yaw_sideslip_telemetry.m
-load("alameda05042026.mat"); % Load any logs with steering angle, yaw rate, and lat accel channels; ...
-% Rename channels as necessary
+load("alameda05022026skidpad.mat"); % Load any logs with steering angle,
+% yaw rate, and lat accel channels; rename variables as necessary
 
 %% --- Vehicle Parameters ---
 steering_ratio = 4.0;
 wheelbase_m = 1.5742;   
 
 %% --- Data Extraction & Interpolation ---
-% 1. Alias the long structures for cleaner scripting
+% 1. Alias log names for cleaner scripting
 can_log = rotortemp_fullendurance_05_04_2026_1;
 imu_log = RaceBoxTrackSessionon04_05_202605_46;
 
@@ -31,8 +31,8 @@ speed_ms(speed_ms < 0.1) = 0.1;
 
 %% --- Understeer & Theoretical Yaw Calculations (Steady-State Approximations) ---
 % Linear Yaw Rate w/ K_us (compare to pure kinematic)
-[understeer_angle_deg, ideal_yaw_rate_rads, K_us_scalar_deg_g, K_us_inst_deg_g] = ...
-    understeer_yaw_telemetry_calc(steer_angle_deg, steering_ratio, speed_ms, wheelbase_m, lat_accel_ms2);
+[understeer_angle_deg, ideal_yaw_rate_rads, K_us_scalar_deg_g] = ...
+    understeer_yaw_telemetry_calc(time_can, steer_angle_deg, steering_ratio, speed_ms, wheelbase_m, lat_accel_ms2);
 
 fprintf('Extracted Understeer Gradient (K_us): %.2f deg/g\n', K_us_scalar_deg_g);
 
@@ -66,7 +66,7 @@ title('Yaw Rates');
 legend('Location', 'best');
 grid on;
 
-% Subplot 2: Calculated Understeer Angle
+% Subplot 2: Instantaneous Understeer Angle
 subplot(3,1,2);
 plot(time_can, understeer_angle_deg, 'LineWidth', 1.2, 'DisplayName', 'Understeer Angle');
 xlabel('Time (s)');
@@ -78,7 +78,6 @@ grid on;
 subplot(3,1,3);
 plot(time_can, sideslip_rate_rads, 'LineWidth', 1.2, 'DisplayName', 'Sideslip Rate of Change');
 hold on;
-yline(0, 'LineWidth', 1.5); % The target steady-state line (Zero)
 xlabel('Time (s)');
 ylabel('\beta^{x} (rad/s)');
 title('\beta^{.} Sideslip Rate of Change');
