@@ -23,13 +23,13 @@ long_accel_raw_ms2 = imu_log.GForceX .* 9.80665;
 yaw_rate_raw_rads = deg2rad(imu_log.GyroZ); 
 
 % 4. Interpolate IMU data to match CANary resolution (main timeline)
-speed_ms = interp1(time_imu, speed_raw_ms, time_can, 'linear', 'extrap');
+vx_ms = interp1(time_imu, speed_raw_ms, time_can, 'linear', 'extrap');
 lat_accel_ms2 = interp1(time_imu, lat_accel_raw_ms2, time_can, 'linear', 'extrap');
 long_accel_ms2 = interp1(time_imu, long_accel_raw_ms2, time_can, 'linear', 'extrap');
 yaw_rate_meas_rads = interp1(time_imu, yaw_rate_raw_rads, time_can, 'linear', 'extrap'); 
 
 % Prevent divide-by-zero errors in speed-dependent calculations
-speed_ms(speed_ms < 0.1) = 0.1; 
+vx_ms(vx_ms < 0.1) = 0.1; 
 
 %% --- Understeer & Theoretical Yaw Calculations (Steady-State Approximations) ---
 
@@ -42,7 +42,7 @@ K_us_scalar_deg_g = understeer_calc_telemetry();
 
 % --- Calculate Understeer Angle ---
 % Ideal Ackermann steer angle (rad)
-ideal_angle_rad = (wheelbase_m .* lat_accel_ms2) ./ (speed_ms .^ 2);
+ideal_angle_rad = (wheelbase_m .* lat_accel_ms2) ./ (vx_ms .^ 2);
 % Understeer angle
 understeer_angle_rad = road_wheel_rad - ideal_angle_rad;
 understeer_angle_deg = rad2deg(understeer_angle_rad);
@@ -51,15 +51,15 @@ understeer_angle_deg = rad2deg(understeer_angle_rad);
 % Linear Dynamic Yaw Rate (Kinematic with K_us correction)
 g_ms2 = 9.80665;
 K_us_scalar_SI = deg2rad(K_us_scalar_deg_g) / g_ms2; % Convert back to SI for calculation
-ideal_yaw_rate_rads = (speed_ms .* road_wheel_rad) ./ (wheelbase_m + (K_us_scalar_SI .* (speed_ms .^ 2)));
+ideal_yaw_rate_rads = (vx_ms .* road_wheel_rad) ./ (wheelbase_m + (K_us_scalar_SI .* (vx_ms .^ 2)));
 
 % Pure Kinematic Yaw Rate
 % Ideal according to only tire angle and wheelbase
-yaw_rate_kinematic_rads = (speed_ms .* tan(road_wheel_rad)) ./ wheelbase_m;
+yaw_rate_kinematic_rads = (vx_ms .* tan(road_wheel_rad)) ./ wheelbase_m;
 
 % Lateral Acceleration Yaw Rate
 % Steady state approximation (r = a_y / v_x)
-yaw_rate_lataccel_rads = lat_accel_ms2 ./ speed_ms;
+yaw_rate_lataccel_rads = lat_accel_ms2 ./ vx_ms;
 
 % Sideslip rate of change (transient)
 % B = a_y / v_x - measured yaw rate
