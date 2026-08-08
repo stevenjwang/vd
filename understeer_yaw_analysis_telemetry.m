@@ -1,6 +1,6 @@
 % understeer_yaw_sideslip_telemetry.m
-load("alameda05042026.mat"); % Load any logs with steer angle, v_x, a_x, a_y, and
-% yaw rates; rename variables as necessary
+load("alameda05042026.mat"); % Load any time-aligned logs with
+% steer angle, v_x, a_x, a_y, and yaw rates; rename logs/channels as necessary
 
 %% --- Vehicle Parameters ---
 steering_ratio = 4.0;
@@ -22,14 +22,23 @@ lat_accel_raw_ms2 = imu_log.GForceY .* 9.80665;
 long_accel_raw_ms2 = imu_log.GForceX .* 9.80665;
 yaw_rate_raw_rads = deg2rad(imu_log.GyroZ); 
 
-% 4. Interpolate IMU data to match CANary resolution (main timeline)
-vx_ms = interp1(time_imu, speed_raw_ms, time_can, 'linear', 'extrap');
-lat_accel_ms2 = interp1(time_imu, lat_accel_raw_ms2, time_can, 'linear', 'extrap');
-long_accel_ms2 = interp1(time_imu, long_accel_raw_ms2, time_can, 'linear', 'extrap');
-yaw_rate_meas_rads = interp1(time_imu, yaw_rate_raw_rads, time_can, 'linear', 'extrap'); 
+% 4. Extract, Filter, and Interpolate IMU data to match CANary resolution 
+% Apply moving median to reject spikes
+window_size = 3; 
+
+speed_ms = movmedian(speed_raw_ms, window_size);
+lat_accel_ms2 = movmedian(lat_accel_raw_ms2, window_size);
+long_accel_ms2 = movmedian(long_accel_raw_ms2, window_size);
+yaw_rate_rads = movmedian(yaw_rate_raw_rads, window_size);
+
+% Interpolate IMU data
+vx_ms = interp1(time_imu, speed_ms, time_can, 'linear', 'extrap');
+lat_accel_ms2 = interp1(time_imu, lat_accel_ms2, time_can, 'linear', 'extrap');
+long_accel_ms2 = interp1(time_imu, long_accel_ms2, time_can, 'linear', 'extrap');
+yaw_rate_meas_rads = interp1(time_imu, yaw_rate_rads, time_can, 'linear', 'extrap'); 
 
 % Prevent divide-by-zero errors in speed-dependent calculations
-vx_ms(vx_ms < 0.1) = 0.1; 
+vx_ms(vx_ms < 0.1) = 0.1;
 
 %% --- Understeer & Theoretical Yaw Calculations (Steady-State Approximations) ---
 
