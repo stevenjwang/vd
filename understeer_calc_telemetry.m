@@ -2,7 +2,8 @@ function K_us_scalar_deg_g = understeer_calc_telemetry()
 % Calculates scalar understeer gradient K_us from any time-aligned log containing
 % steer angle, v_x, a_x, a_y, and yaw rate; rename variables as necessary
 
-load("alameda05022026skidpad.mat"); % Skidpad gives best K_us conditions
+load("alameda05022026skidpad.mat"); % Skidpad gives best K_us conditions;
+% update as available
 
 % Alias log names for cleaner scripting
 can_log = [Alameda_Skidpad0384LLTD_2026_05_02T20_21_47];
@@ -51,11 +52,11 @@ ss_pts = cond_speed & cond_ax_max & cond_ay_min & cond_ay_max & cond_yaw_accel_m
 if sum(ss_pts) > 50
     coeffs = robustfit(lat_accel_ms2(ss_pts), understeer_angle_rad(ss_pts));
     K_us_scalar_SI = coeffs(2);
+    K_us_scalar_deg_g = rad2deg(K_us_scalar_SI) * g_ms2;
 else
     warning('Insufficient steady-state linear cornering data. Defaulting K_us to B26 target (0.15).');
-    K_us_scalar_SI = 0.15;
+    K_us_scalar_deg_g = 0.15;
 end
 
-K_us_scalar_deg_g = rad2deg(K_us_scalar_SI) * g_ms2;
 fprintf('Extracted Understeer Gradient (K_us): %.2f deg/g\n', K_us_scalar_deg_g);
 end
