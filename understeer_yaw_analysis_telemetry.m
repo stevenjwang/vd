@@ -7,7 +7,7 @@ steering_ratio = 4.0;
 wheelbase_m = 1.5742;   
 
 %% --- Data Extraction & Interpolation ---
-% 1. Alias log names for cleaner scripting
+% 1. Alias log names from mat file
 can_log = [rotortemp_fullendurance_05_04_2026_1];
 imu_log = [RaceBoxTrackSessionon04_05_202605_46];
 
@@ -35,7 +35,7 @@ yaw_rate_rads = movmedian(yaw_rate_raw_rads, window_size);
 vx_ms = interp1(time_imu, speed_ms, time_can, 'linear', 'extrap');
 lat_accel_ms2 = interp1(time_imu, lat_accel_ms2, time_can, 'linear', 'extrap');
 long_accel_ms2 = interp1(time_imu, long_accel_ms2, time_can, 'linear', 'extrap');
-yaw_rate_meas_rads = interp1(time_imu, yaw_rate_rads, time_can, 'linear', 'extrap'); 
+yaw_rate_meas_deg = rad2deg(interp1(time_imu, yaw_rate_rads, time_can, 'linear', 'extrap'));
 
 % Prevent divide-by-zero errors in speed-dependent calculations
 vx_ms(vx_ms < 0.1) = 0.1;
@@ -60,31 +60,31 @@ understeer_angle_deg = rad2deg(understeer_angle_rad);
 % Linear Dynamic Yaw Rate (Kinematic with K_us correction)
 g_ms2 = 9.80665;
 K_us_scalar_SI = deg2rad(K_us_scalar_deg_g) / g_ms2; % Convert back to SI for calculation
-ideal_yaw_rate_rads = (vx_ms .* road_wheel_rad) ./ (wheelbase_m + (K_us_scalar_SI .* (vx_ms .^ 2)));
+ideal_yaw_rate_deg = rad2deg((vx_ms .* road_wheel_rad) ./ (wheelbase_m + (K_us_scalar_SI .* (vx_ms .^ 2))));
 
 % Pure Kinematic Yaw Rate
 % Ideal according to only tire angle and wheelbase
-yaw_rate_kinematic_rads = (vx_ms .* tan(road_wheel_rad)) ./ wheelbase_m;
+yaw_rate_kinematic_deg = rad2deg((vx_ms .* tan(road_wheel_rad)) ./ wheelbase_m);
 
 % Lateral Acceleration Yaw Rate
 % Steady state approximation (r = a_y / v_x)
-yaw_rate_lataccel_rads = lat_accel_ms2 ./ vx_ms;
+yaw_rate_lataccel_deg = rad2deg(lat_accel_ms2 ./ vx_ms);
 
 % Sideslip rate of change (transient)
 % B = a_y / v_x - measured yaw rate
-sideslip_rate_rads = yaw_rate_lataccel_rads - yaw_rate_meas_rads;
+sideslip_rate_deg = rad2deg(yaw_rate_lataccel_deg - yaw_rate_meas_deg);
 
 %% --- Plots ---
 
 % Subplot 1: Yaw Rate Overlays
 subplot(3,1,1);
-plot(time_can, yaw_rate_meas_rads, 'DisplayName', 'Measured');
+plot(time_can, yaw_rate_meas_deg, 'DisplayName', 'Measured');
 hold on;
-plot(time_can, yaw_rate_kinematic_rads, 'DisplayName', 'Kinematic (Steering Input)');
-plot(time_can, ideal_yaw_rate_rads, 'DisplayName', 'Theoretical (Linear Tire Model)');
-plot(time_can, yaw_rate_lataccel_rads, 'DisplayName', 'a_y/v_x');
+plot(time_can, yaw_rate_kinematic_deg, 'DisplayName', 'Kinematic (Steering Input)');
+plot(time_can, ideal_yaw_rate_deg, 'DisplayName', 'Theoretical (Linear Tire Model)');
+plot(time_can, yaw_rate_lataccel_deg, 'DisplayName', 'a_y/v_x');
 
-ylabel('Yaw Rate (rad/s)');
+ylabel('Yaw Rate (deg/s)');
 title('Yaw Rates');
 legend('Location', 'best');
 grid on;
@@ -99,9 +99,9 @@ grid on;
 
 % Subplot 3: Sideslip Rate of Change (Transient)
 subplot(3,1,3);
-plot(time_can, sideslip_rate_rads, 'DisplayName', 'Sideslip Rate of Change');
+plot(time_can, sideslip_rate_deg, 'DisplayName', 'Sideslip Rate of Change');
 hold on;
 xlabel('Time (s)');
-ylabel('\beta^{.} (rad/s)');
-title('\beta^{.} Sideslip Rate of Change');
+ylabel('Sideslip Rate of Change (deg/s)');
+title('Sideslip Rate of Change');
 grid on;
