@@ -77,28 +77,46 @@ sideslip_rate_deg = rad2deg(yaw_rate_lataccel_deg - yaw_rate_meas_deg);
 %% --- Plots ---
 
 % Subplot 1: Yaw Rate Overlays
-subplot(3,1,1);
+subplot(4,1,1);
 plot(time_can, yaw_rate_meas_deg, 'DisplayName', 'Measured');
 hold on;
 plot(time_can, yaw_rate_kinematic_deg, 'DisplayName', 'Kinematic (Steering Input)');
 plot(time_can, ideal_yaw_rate_deg, 'DisplayName', 'Theoretical (Linear Tire Model)');
 plot(time_can, yaw_rate_lataccel_deg, 'DisplayName', 'a_y/v_x');
-
 ylabel('Yaw Rate (deg/s)');
 title('Yaw Rates');
 legend('Location', 'best');
 grid on;
 
+
 % Subplot 2: Instantaneous Understeer Angle vs Ideal Kinematic Steer Angle
-subplot(3,1,2);
+subplot(4,1,2);
 plot(time_can, understeer_angle_deg, 'DisplayName', 'Understeer Angle');
 xlabel('Time (s)');
 ylabel('Understeer Angle (deg)');
 title('Instantaneous Understeer Angle (Measured vs Kinematic)');
 grid on;
 
-% Subplot 3: Sideslip Rate of Change (Transient)
-subplot(3,1,3);
+% Subplot 3: Steer Angle
+subplot(4,1,3);
+plot(time_can, steer_angle_deg, 'DisplayName', 'Steer Angle (deg)');
+xlabel('Time (s)');
+ylabel('Steer Angle (deg)');
+title('Steer Angle');
+grid on;
+
+
+% Subplot 4: Lateral Acceleration
+subplot(4,1,4);
+plot(time_can, lat_accel_ms2 ./ 9.80665, 'DisplayName', 'a_y');
+xlabel('Time (s)');
+ylabel('a_y');
+title('Lateral Acceleration');
+grid on;
+
+
+% Sideslip Rate of Change (Transient)
+figure();
 plot(time_can, sideslip_rate_deg, 'DisplayName', 'Sideslip Rate of Change');
 hold on;
 xlabel('Time (s)');
