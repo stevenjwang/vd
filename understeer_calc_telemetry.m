@@ -41,11 +41,11 @@ understeer_angle_rad = road_wheel_rad - ideal_angle_rad;
 % 6. K_us via robustfit with steady-state filters
 yaw_accel = gradient(yaw_rate_rads_interp, t_canary);
 
-cond_speed = vx_ms > 6;
-cond_ay_min = abs(lat_accel_ms2) > 4;
-cond_ay_max = abs(lat_accel_ms2) < 10;
-cond_ax_max = abs(long_accel_ms2) < 2;
-cond_yaw_accel_max = abs(yaw_accel) < 0.5;
+cond_speed = vx_ms > 6; % filter out kinematic-dominant states
+cond_ay_min = abs(lat_accel_ms2) > 4; % lower bound of a_y grouping near a_x = 0 from endurance g-g plot
+cond_ay_max = abs(lat_accel_ms2) < 10; % magic tire linear range
+cond_ax_max = abs(long_accel_ms2) < 2; % a_x ~= 0 grouping from endurance g-g plot
+cond_yaw_accel_max = abs(yaw_accel) < 0.5; % filter out transient yaw accel
 
 ss_pts = cond_speed & cond_ax_max & cond_ay_min & cond_ay_max & cond_yaw_accel_max;
 
