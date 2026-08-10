@@ -110,8 +110,8 @@ grid on;
 subplot(4,1,4);
 plot(time_can, lat_accel_ms2 ./ 9.80665, 'DisplayName', 'a_y');
 xlabel('Time (s)');
-ylabel('a_y');
-title('Lateral Acceleration');
+ylabel('GForceY');
+title('GForceY');
 grid on;
 
 

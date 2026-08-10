@@ -12,7 +12,7 @@ subplot(4,1,1);
 plot(imulog.Time,imuspeed,'DisplayName','IMUspeed', XDataSource = 'imulog.Time',YDataSource = 'imuspeed');
 linkdata on;
 xlabel("Time");
-ylabel("Speed (m/s)");
+ylabel("Speed (km/h)");
 title("Speed vs Time");
 hold on;
 plot(canlog.Time,canlog.WheelSpeedFrontLeft,'DisplayName','WheelSpeedFrontLeft',XDataSource = 'canlog.Time',YDataSource = 'canlog.WheelSpeedFrontLeft');
@@ -36,7 +36,7 @@ plot(imulog.Time,imulog.GForceX,XDataSource = 'imulog.Time',YDataSource = 'imulo
 linkdata on;
 xlabel("Time");
 ylabel("GForceX");
-title("GForceX vs Time");
+title("GForceX");
 grid on;
 
 
