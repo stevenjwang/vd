@@ -1,23 +1,23 @@
-classdef Tire2  
-    properties 
-        gamma 
-        p_i 
+classdef BDITire2
+    properties
+        gamma
+        p_i
         Fx_parameters
-        Fy_parameters       
+        Fy_parameters
         friction_scaling_factor
     end
-           
+
     methods
-        function obj = Tire2(gamma,p_i,Fx_parameters,Fy_parameters,friction_scaling_factor)
+        function obj = BDITire2(gamma,p_i,Fx_parameters,Fy_parameters,friction_scaling_factor)
             obj.gamma = gamma;
             obj.p_i = p_i;
             obj.Fx_parameters = Fx_parameters;
-            obj.Fy_parameters = Fy_parameters;      
+            obj.Fy_parameters = Fy_parameters;
             obj.friction_scaling_factor = friction_scaling_factor;
         end
-        
+
         function out = F_y(obj,alpha,kappa,F_z)
-                       
+
             % Inputs
             gamma = obj.gamma*0.0174533; %degrees to radians
             alpha = alpha*0.0174533; %degrees to radians
@@ -78,9 +78,9 @@ classdef Tire2
             r_vy4 = obj.Fy_parameters(40);
             r_vy5 = obj.Fy_parameters(41);
             r_vy6 = obj.Fy_parameters(42);
-     
-            lambda_cy = 1;       % shape factor   
-            lambda_ey = 1;       % curvature 
+
+            lambda_cy = 1;       % shape factor
+            lambda_ey = 1;       % curvature
             lambda_hy = 0;       % horizontal shift
             lambda_kyalpha = 1;  % cornering stiffness
             lambda_kygamma = 1;  % camber force stiffness
@@ -104,7 +104,7 @@ classdef Tire2
             alpha_y = alpha+S_hy;
             mu_y = (p_dy1+p_dy2.*df_z).*(1-p_dy3.*gamma.^2).*...
                 (1+p_py3.*dp_i+p_py4.*dp_i.^2).*lambda_muy;
-            
+
             C_y = p_cy1.*lambda_cy;
             D_y = mu_y.*F_z;
             E_y = (p_ey1+p_ey2.*df_z).*(1+p_ey5.*gamma.^2-(p_ey3+p_ey4.*gamma).*sign(alpha_y)).*lambda_ey;
@@ -115,7 +115,7 @@ classdef Tire2
             B_ykappa = (r_by1 + r_by4.*gamma.^2).*cos(atan(r_by2.*(alpha - r_by3))).*lambda_ykappa;
             C_ykappa = r_cy1;
             E_ykappa = r_ey1 + r_ey2.*df_z;
-            S_hykappa = r_hy1 + r_hy2.*df_z; 
+            S_hykappa = r_hy1 + r_hy2.*df_z;
             kappa_s = kappa + S_hykappa;
             D_vykappa = mu_y.*F_z.*(r_vy1 + r_vy2.*df_z + r_vy3.*gamma).*cos(atan(r_vy4.*alpha));
 
@@ -130,12 +130,12 @@ classdef Tire2
             F_y = transpose(G_ykappa.*F_y+S_vykappa);
 
             F_y(F_z==0) = 0; %zero load
-            
+
             out = F_y*4.44822*obj.friction_scaling_factor; %lbf to N, scaled
-        end        
-        
+        end
+
         function out = F_x(obj,alpha,kappa,F_z)
-            
+
             gamma = obj.gamma*0.0174533; %degrees to radians
             alpha_f = alpha*0.0174533; %degrees to radians
             F_z = F_z*0.224809; %N to lbf
@@ -190,7 +190,7 @@ classdef Tire2
 
             %% Magic Formula Equations
             mu_x = (p_dx1+p_dx2.*df_z).*(1-p_dx3.*gamma.^2).*(1+p_px3.*dp_i+p_px4.*dp_i.^2).*lambda_mux;
-            
+
             K_xkappa = (p_kx1+p_kx2.*df_z).*exp(p_kx3.*df_z).*(1+p_px1.*dp_i+p_px2.*dp_i.^2).*F_z.*lambda_kxkappa;
             if ~isfinite(K_xkappa)
                 K_xkappa = 1e200;
@@ -217,13 +217,12 @@ classdef Tire2
             F_x = transpose((D_x.*sin(C_x.*atan(B_x.*kappa_x-E_x.*(B_x.*kappa_x-atan(B_x.*kappa_x))))+S_vx).*G_xalpha);
 
             F_x(F_z==0) = 0; %zero load
-            
+
             out = F_x*4.44822*obj.friction_scaling_factor; %lbf to N, scaled
 
 
         end
-        
-    end
-    
-end
 
+    end
+
+end

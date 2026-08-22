@@ -34,8 +34,9 @@ classdef Aero
         function out = drag(obj,long_vel)
             out = obj.rho/2*(long_vel^2)*obj.cda;
         end
-        function out = pd_drag(obj,long_vel,pitch)
-            out = obj.rho/2*(long_vel^2)*(obj.cla+pitch*obj.cla_p_deg_p);
+        function out = pd_drag(obj,long_vel,~)
+            % no cda pitch-sensitivity parameter exists yet, so pitch is ignored
+            out = obj.rho/2*(long_vel^2)*obj.cda;
         end
     end
     

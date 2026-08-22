@@ -4,7 +4,7 @@ setup_paths;
 
 %% 1. Initialize Baseline Vehicle & Lock Static Parameters
 disp('Step 1: Loading baseline car and locking static weight distribution...');
-carCell = carConfig(); 
+[carCell,eventParams] = carConfig();
 car = carCell{1,1};       
 accelCar = carCell{1,2};  
 numWorkers = 16; 
@@ -39,7 +39,7 @@ fprintf('----------------------------------------------------\n\n');
 disp('Step 2: Processing track solver to cluster velocity conditions...');
 paramsArr = gg2(car, numWorkers); 
 car = makeGG(paramsArr, car);
-comp = Events2(car, accelCar);
+comp = Events2(car, accelCar, eventParams);
 comp.calcTimes(); 
 
 load('michigantrack2024.mat'); 

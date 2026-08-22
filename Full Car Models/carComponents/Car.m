@@ -26,7 +26,39 @@ classdef Car
         tire
         ackermann
         g = 9.81;
-        
+
+        % Per-axle grip scaling, applied to the tire forces in tireForce.
+        % The model carries ONE Tire2 for all four corners, so this is how
+        % front and rear grip are varied independently -- see gripSweep.
+        % 1 = the tire model as fitted; 0.95 = 5% less grip on that axle.
+        %
+        % Defaults matter: a Car saved before these existed loads with these
+        % values, so old .mat sweep caches keep working unchanged.
+        gripScaleF = 1;
+        gripScaleR = 1;
+
+        % Rotating inertia, kg-m^2. The longitudinal equation of motion used
+        % to divide the net tyre force by M alone, so the wheels, brake discs,
+        % crank and driveline all counted as zero -- the car accelerated as if
+        % nothing had to be spun up. Against a measured 75 m run the model was
+        % 5.8% quick and, tellingly, completely insensitive to tyre grip
+        % (4.5222 to 4.5241 s across a whole grip sweep), which is the
+        % signature of a missing inertia rather than a missing force.
+        %
+        % Default 0 reproduces the old behaviour exactly, so a Car sitting in
+        % an old sweep cache loads and solves as it always did. carConfig sets
+        % real values, so anything built from carConfig gets them.
+        I_wheel = 0;      % PER WHEEL: tyre, rim, hub, brake disc
+        I_driveline = 0;  % crank + clutch + primary, referred to the CRANK
+
+        % Rolling resistance coefficient. A rearward force Crr*(M*g + downforce)
+        % opposing travel, added to the longitudinal balance in equations()
+        % alongside aero drag. Absent before this -- the model had no rolling
+        % resistance at all, which at 8 m/s is 92% of the aero drag it did have.
+        % Default 0 reproduces the old behaviour, so old sweep caches are
+        % unaffected; carConfig sets the real value.
+        Crr = 0;
+
         Iyy
         Ixx   % needs to be about roll center
         k     % spring rate (assumed same over all tires) N/m
@@ -63,7 +95,11 @@ classdef Car
     
     methods
         function obj = Car(mass,wheelbase,weight_dist,track_width,wheel_radius,cg_height,...
-                roll_center_height_front,roll_center_height_rear,R_sf,I_zz,static_gamma_f,static_gamma_r,camber_compliance_f,camber_compliance_r,aero,powertrain,tire,ackermann,static_r_toe);
+                roll_center_height_front,roll_center_height_rear,R_sf,I_zz,static_gamma_f,static_gamma_r,camber_compliance_f,camber_compliance_r,aero,powertrain,tire,ackermann,static_r_toe,...
+                gripScaleF,gripScaleR,I_wheel,I_driveline,Crr)
+            % gripScaleF/R and the two inertias are optional and default to
+            % the values declared above, so a call written before they existed
+            % still builds a car that behaves as it did then
             obj.M = mass;
             obj.W_b = wheelbase;
             obj.l_f = wheelbase*weight_dist; % distance from cg to front
@@ -86,10 +122,33 @@ classdef Car
             obj.camber_compliance_f = camber_compliance_f;
             obj.camber_compliance_r = camber_compliance_r;
             obj.static_r_toe = static_r_toe;
+            if nargin >= 20 && ~isempty(gripScaleF),   obj.gripScaleF   = gripScaleF;   end
+            if nargin >= 21 && ~isempty(gripScaleR),   obj.gripScaleR   = gripScaleR;   end
+            if nargin >= 22 && ~isempty(I_wheel),      obj.I_wheel      = I_wheel;      end
+            if nargin >= 23 && ~isempty(I_driveline),  obj.I_driveline  = I_driveline;  end
+            if nargin >= 24 && ~isempty(Crr),          obj.Crr          = Crr;          end
+        end
+
+        function m = rotatingMass(obj,current_gear)
+            % Equivalent translating mass, in kg, of everything that has to be
+            % angularly accelerated along with the car.
+            %
+            % Each wheel contributes I/R^2. The driveline sits UPSTREAM of the
+            % gearbox, so its inertia is referred through the square of the
+            % total reduction and is therefore strongly gear-dependent -- on
+            % this car the same crank is worth several times more in first
+            % than in fifth. That is exactly why the effect is largest where
+            % the acceleration event spends its time.
+            %
+            % Only the inertia is added here. The WEIGHT of these parts is
+            % already in M, so load transfer and the static axle loads must
+            % keep using M on its own.
+            n = obj.powertrain.drivetrain_reduction(current_gear);
+            m = (4*obj.I_wheel + obj.I_driveline*n^2)/obj.R^2;
         end
         
         function [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
-                Fzvirtual,Fz,alpha,T,Fy, gamma] = equations(obj,P)           
+                Fzvirtual,Fz,alpha,T,Fy, gamma, Fx, ssInfo] = equations(obj,P)
             
             % inputs: vehicle parameters
             % outputs: vehicle accelerations and other properties
@@ -108,8 +167,8 @@ classdef Car
             omega = zeros(1,4);
             omega(1) = (kappa(1)+1)/obj.R*(long_vel+yaw_rate*obj.t_f/2);
             omega(2) = (kappa(2)+1)/obj.R*(long_vel-yaw_rate*obj.t_f/2);
-            omega(3) = (kappa(3)+1)/obj.R*(long_vel+yaw_rate*obj.t_f/2);
-            omega(4) = (kappa(4)+1)/obj.R*(long_vel-yaw_rate*obj.t_f/2);
+            omega(3) = (kappa(3)+1)/obj.R*(long_vel+yaw_rate*obj.t_r/2);
+            omega(4) = (kappa(4)+1)/obj.R*(long_vel-yaw_rate*obj.t_r/2);
                         
             [engine_rpm,current_gear] = obj.powertrain.engine_rpm(omega(3),omega(4),long_vel);
             [T_1,T_2,T_3,T_4] = obj.powertrain.wheel_torques(engine_rpm, omega(3), omega(4), throttle, current_gear, long_vel);
@@ -139,13 +198,26 @@ classdef Car
 
             %disp([steer_angle_1 steer_angle_2]);
 
-            [Fz, Fzvirtual] = ssForces(obj,long_vel,yaw_rate,T,(1/2)*(steer_angle_1+steer_angle_2)*pi/180);
+            % only assemble the diagnostics struct when a caller asks for it:
+            % this runs inside every fmincon function evaluation
+            if nargout >= 16
+                [Fz, Fzvirtual, ssInfo] = ssForces(obj,long_vel,yaw_rate,T,(1/2)*(steer_angle_1+steer_angle_2)*pi/180);
+            else
+                [Fz, Fzvirtual] = ssForces(obj,long_vel,yaw_rate,T,(1/2)*(steer_angle_1+steer_angle_2)*pi/180);
+            end
             
             % slip angles (small angle assumption)
             alpha(1) = -steer_angle_1+(lat_vel+obj.l_f*yaw_rate)/(long_vel+yaw_rate*obj.t_f/2)*180/pi; %deg
             alpha(2) = -steer_angle_2+(lat_vel+obj.l_f*yaw_rate)/(long_vel-yaw_rate*obj.t_f/2)*180/pi; %deg
+            % Rear static toe is MIRRORED left to right. Both wheels used to
+            % get -static_r_toe, which is toe-in on one side and toe-out on
+            % the other: the car then makes a side force and yaw moment while
+            % driving straight, exactly as the static camber term did before
+            % it was given staticSign. Dormant while static_r_toe = 0, but at
+            % 0.5 deg it put 2.5 m/s^2 of lateral asymmetry into the model.
+            % Sign order matches the camber convention: 3 = RL, 4 = RR.
             alpha(3) = -obj.static_r_toe + (lat_vel-obj.l_r*yaw_rate)/(long_vel+yaw_rate*obj.t_r/2)*180/pi;
-            alpha(4) = -obj.static_r_toe + (lat_vel-obj.l_r*yaw_rate)/(long_vel-yaw_rate*obj.t_r/2)*180/pi;
+            alpha(4) = +obj.static_r_toe + (lat_vel-obj.l_r*yaw_rate)/(long_vel-yaw_rate*obj.t_r/2)*180/pi;
             
 
             %gamma = [obj.static_gamma obj.static_gamma obj.static_gamma obj.static_gamma];
@@ -161,7 +233,19 @@ classdef Car
                         
             % Equations of Motion
             lat_accel = sum(Fy)*(1/obj.M)-yaw_rate*long_vel;
-            long_accel = (sum(Fx)-obj.aero.drag(long_vel))*(1/(obj.M))+yaw_rate*lat_vel;
+            % Rolling resistance: a rearward force scaling with the total
+            % vertical load, downforce included, opposing travel. long_vel > 0
+            % everywhere in the g-g and every event, so the sign is fixed --
+            % it subtracts from tractive force and ADDS to braking, both
+            % correct. This is the single place longitudinal force is summed,
+            % so putting it here reaches the g-g solvers, the accel-event
+            % lookup and the lap solver alike. Zero Crr is a no-op.
+            F_rr = obj.Crr * (obj.M*obj.g + obj.aero.lift(long_vel));
+
+            % M + rotatingMass, not M: the tyre force has to accelerate the
+            % spinning parts as well as the car. Zero inertias reduce this to
+            % the old expression exactly.
+            long_accel = (sum(Fx)-obj.aero.drag(long_vel)-F_rr)*(1/(obj.M+obj.rotatingMass(current_gear)))+yaw_rate*lat_vel;
             yaw_accel = ((Fx(1)-Fx(2))*obj.t_f/2+(Fx(3)-Fx(4))*obj.t_r/2+(Fy(1)+Fy(2))*obj.l_f-(Fy(3)+Fy(4))*obj.l_r)*(1/obj.I_zz);
             %yaw_accel = ((Fy(1)+Fy(2))*obj.l_f-(Fy(3)+Fy(4))*obj.l_r)*(1/obj.I_zz);
     
@@ -172,13 +256,100 @@ classdef Car
             wheel_accel(4) = (T(4)-Fx(4)*obj.R); 
         end
         
+        function m = metrics(obj,P)
+            % Full named record of one solved operating point.
+            % P is the 9-element state/control vector (same as equations).
+            % Returns a scalar struct; struct arrays of these concatenate
+            % straight into a table via struct2table.
+
+            [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
+                Fzvirtual,Fz,alpha,T,Fy,gamma,Fx,ss] = obj.equations(P);
+
+            % --- inputs / state ---
+            m.steer_angle = P(1);
+            m.throttle    = P(2);
+            m.vCar        = P(3);
+            m.lat_vel     = P(4);
+            m.yaw_rate    = P(5);
+            m.beta        = beta;
+
+            % --- accelerations (g), gLat/gLong are the steady-state values ---
+            % lat_accel/long_accel out of equations are the residuals that the
+            % optimiser drives to zero, so the achieved accelerations are the
+            % kinematic ones: a_y = v*r, a_x = the residual plus v*r*beta terms
+            m.gLat   = (P(3)*P(5))/obj.g;
+            m.gLong  = long_accel/obj.g;
+            m.gMag   = hypot(m.gLat,m.gLong);
+            % g-g polar angle: 0 deg = pure acceleration, +90 = pure cornering,
+            % 180 = pure braking
+            m.theta  = atan2d(m.gLat,m.gLong);
+            m.lat_accel_residual = lat_accel;
+            m.yaw_accel_residual = yaw_accel;
+
+            % --- powertrain ---
+            m.engine_rpm   = engine_rpm;
+            m.current_gear = current_gear;
+
+            % --- aero ---
+            % no pitch column: aero is static, and the old pitch estimate came
+            % from hardcoded ride rates via an unconverged solve
+            m.downforce = ss.downforce;
+            m.drag      = ss.drag;
+            m.ClA       = obj.aero.cla;
+            m.CdA       = obj.aero.cda;
+            m.CoP       = obj.aero.D_f;      % front downforce fraction
+            m.LoD       = ss.downforce/max(ss.drag,eps);
+
+            % --- load distribution ---
+            m.Fz_front_axle = ss.Fz_front_axle;
+            m.Fz_rear_axle  = ss.Fz_rear_axle;
+            m.front_Fz_frac = ss.Fz_front_axle/(ss.Fz_front_axle+ss.Fz_rear_axle);
+            m.LLT_front     = ss.lat_load_transfer_front;
+            m.LLT_rear      = ss.lat_load_transfer_rear;
+            m.LLTD          = ss.LLTD;
+            m.long_load_transfer = ss.long_load_transfer;
+            m.min_Fz        = min(Fzvirtual);   % negative => wheel lift
+
+            % --- per corner (1 FL, 2 FR, 3 RL, 4 RR) ---
+            for i = 1:4
+                s = num2str(i);
+                m.(['Fz_' s])    = Fz(i);
+                m.(['Fy_' s])    = Fy(i);
+                m.(['Fx_' s])    = Fx(i);
+                m.(['alpha_' s]) = alpha(i);
+                m.(['gamma_' s]) = gamma(i);
+                m.(['kappa_' s]) = P(5+i);
+                m.(['T_' s])     = T(i);
+                m.(['omega_' s]) = omega(i);
+                m.(['wheel_accel_residual_' s]) = wheel_accel(i);
+            end
+
+            % --- axle summaries ---
+            m.Fy_front = Fy(1)+Fy(2);
+            m.Fy_rear  = Fy(3)+Fy(4);
+            % front share of total lateral force: >l_r/W_b implies the front
+            % is working harder than its static load share (understeer margin)
+            m.Fy_front_frac = m.Fy_front/max(abs(m.Fy_front+m.Fy_rear),eps);
+        end
+
         function [Fx,Fy,F_xw] = tireForce(obj,steer_angle_1,steer_angle_2,alpha,kappa,Fz,gamma)
             %radians
+            % Per-axle grip scaling. Applied to the tire FORCES, not to Fz, so
+            % it is a friction multiplier rather than a load change -- same
+            % thing tire.friction_scaling_factor does globally, split by axle.
+            % Scales Fx as well as Fy: a friction change is not lateral-only,
+            % and F_xw feeds the wheel torque balance, so scaling one without
+            % the other would leave wheel_accel inconsistent.
+            % isempty guard covers Car objects saved before these properties
+            % existed, which load with [] rather than the class default.
+            sF = obj.gripScaleF; if isempty(sF), sF = 1; end
+            sR = obj.gripScaleR; if isempty(sR), sR = 1; end
+
             % forces in tire frame of reference
-            F_xw1 = obj.tire.F_x(alpha(1),kappa(1),Fz(1),gamma(1)); 
-            F_yw1 = obj.tire.F_y(alpha(1),kappa(1),Fz(1),gamma(1));
-            F_xw2 = obj.tire.F_x(alpha(2),kappa(2),Fz(2),gamma(2));
-            F_yw2 = obj.tire.F_y(alpha(2),kappa(2),Fz(2),gamma(2));
+            F_xw1 = sF*obj.tire.F_x(alpha(1),kappa(1),Fz(1),gamma(1));
+            F_yw1 = sF*obj.tire.F_y(alpha(1),kappa(1),Fz(1),gamma(1));
+            F_xw2 = sF*obj.tire.F_x(alpha(2),kappa(2),Fz(2),gamma(2));
+            F_yw2 = sF*obj.tire.F_y(alpha(2),kappa(2),Fz(2),gamma(2));
             F_xw = [F_xw1; F_xw2];
 
             % forces in vehicle frame of reference
@@ -187,10 +358,10 @@ classdef Car
             F_x2 = F_xw2*cosd(steer_angle_2)-F_yw2*sind(steer_angle_2);
             F_y2 = F_xw2*sind(steer_angle_2)+F_yw2*cosd(steer_angle_2);
             
-            F_x3 = obj.tire.F_x(alpha(3),kappa(3),Fz(3),gamma(3));
-            F_y3 = obj.tire.F_y(alpha(3),kappa(3),Fz(3),gamma(3));
-            F_x4 = obj.tire.F_x(alpha(4),kappa(4),Fz(4),gamma(4));
-            F_y4 = obj.tire.F_y(alpha(4),kappa(4),Fz(4),gamma(4));
+            F_x3 = sR*obj.tire.F_x(alpha(3),kappa(3),Fz(3),gamma(3));
+            F_y3 = sR*obj.tire.F_y(alpha(3),kappa(3),Fz(3),gamma(3));
+            F_x4 = sR*obj.tire.F_x(alpha(4),kappa(4),Fz(4),gamma(4));
+            F_y4 = sR*obj.tire.F_y(alpha(4),kappa(4),Fz(4),gamma(4));
 
             Fx = [F_x1; F_x2; F_x3; F_x4];
             Fy = [F_y1; F_y2; F_y3; F_y4];
@@ -325,23 +496,43 @@ classdef Car
             xdot(14) = ((T(4)-Fx(4)*obj.R)*(obj.Jw+obj.Jm*(Gr/2)^2) - (T(3)-Fx(3)*obj.R)*obj.Jm*(Gr/2)^2)*(1/denom);
         end
 
-        function [Fz_f, Fz_r] = FzForces(obj,longVel,T,pitch)
-            Fz_front_static = (obj.M*9.81*obj.l_r+obj.aero.pd_lift(longVel,pitch)*(obj.aero.D_f+obj.aero.D_p_deg_p*pitch))/(obj.W_b);
-            Fz_rear_static = (obj.M*9.81*obj.l_f+obj.aero.pd_lift(longVel,pitch)*(obj.aero.D_r-obj.aero.D_p_deg_p*pitch))/(obj.W_b);
-            long_load_transfer = (sum(T)/obj.R)*(obj.h_g/obj.W_b);
+        function [Fz_f, Fz_r] = FzForces(obj,longVel,T)
+            % STATIC AERO: ClA, CdA and the front/rear split are constants.
+            % Pitch dependence is deliberately not modeled -- there is no aero
+            % map to calibrate cla_p_deg_p / D_p_deg_p against, and the
+            % previous pitch path was inert (both coefficients zero) while
+            % costing an extra load-transfer solve. Aero.pd_lift/pd_drag and
+            % the *_p_deg_p properties are kept for when a map exists; see
+            % ssForces for what has to be restored.
+            %
+            % weight split by moment balance about each axle; downforce is
+            % already a force and is split directly by aero distribution
+            downforce = obj.aero.lift(longVel);
+            Fz_front_static = (obj.M*9.81*obj.l_r)/obj.W_b + downforce*obj.aero.D_f;
+            Fz_rear_static = (obj.M*9.81*obj.l_f)/obj.W_b + downforce*obj.aero.D_r;
+            % net longitudinal force on the chassis: tractive/braking force at
+            % the contact patches (sum(T)/R, neglecting wheel dynamics) less
+            % drag. Drag is assumed to act at cg height (no CoP height modeled)
+            long_load_transfer = (sum(T)/obj.R-obj.aero.drag(longVel))*(obj.h_g/obj.W_b);
             Fz_f = Fz_front_static - long_load_transfer;
             Fz_r = Fz_rear_static + long_load_transfer;
         end
         
-        function [Fz, Fzvirtual] = ssForces(obj,longVel,yawRate,T,steer_angle)
+        function [Fz, Fzvirtual, ssInfo] = ssForces(obj,longVel,yawRate,T,steer_angle)
+            % third output ssInfo exposes the intermediate load-transfer terms
+            % for metric logging; existing 2-output callers are unaffected
 
-            [Fz_front_init, Fz_rear_init] = FzForces(obj,longVel,T,0);
-            pitch = 180/pi*asin((Fz_rear_init/26444.15-Fz_front_init/25918.77)/obj.W_b);
-            [Fz_front, Fz_rear] = FzForces(obj,longVel,T,pitch); % calculate pitch dependent
-            
+            % Static aero: axle loads come straight out, no pitch iteration.
+            % To restore pitch dependence you need (a) a converged pitch solve
+            % -- the old single Picard step overshot the fixed point by ~24%
+            % -- (b) ride rates fed from carConfig rather than hardcoded, and
+            % (c) real cla_p_deg_p / D_p_deg_p from an aero map.
+            [Fz_front, Fz_rear] = FzForces(obj,longVel,T);
+
+
             lat_load_transfer_front = (yawRate*longVel*obj.M)/obj.t_f*((obj.l_r*obj.h_rf)/obj.W_b+...
                 obj.R_sf*(obj.h_g-obj.h_rc));
-            lat_load_transfer_rear = (yawRate*longVel*obj.M)/obj.t_r*((obj.l_r*obj.h_rr)/obj.W_b+...
+            lat_load_transfer_rear = (yawRate*longVel*obj.M)/obj.t_r*((obj.l_f*obj.h_rr)/obj.W_b+...
                 (1-obj.R_sf)*(obj.h_g-obj.h_rc));
             
 %             LLTD_caster = obj.R_sf-0.06*steer_angle/(25*pi/180);
@@ -358,8 +549,25 @@ classdef Car
             Fzvirtual(4) = 0.5*Fz_rear-lat_load_transfer_rear;
 
             % smooth approximation of max function
-            epsilon = 10; 
+            epsilon = 10;
             Fz = (Fzvirtual + sqrt(Fzvirtual.^2 + epsilon))./2;
+
+            if nargout > 2
+                ssInfo.Fz_front_axle = Fz_front;
+                ssInfo.Fz_rear_axle = Fz_rear;
+                ssInfo.lat_load_transfer_front = lat_load_transfer_front;
+                ssInfo.lat_load_transfer_rear = lat_load_transfer_rear;
+                % LLTD: front share of total lateral load transfer
+                totalLLT = lat_load_transfer_front + lat_load_transfer_rear;
+                if abs(totalLLT) < eps
+                    ssInfo.LLTD = NaN;
+                else
+                    ssInfo.LLTD = lat_load_transfer_front/totalLLT;
+                end
+                ssInfo.downforce = obj.aero.lift(longVel);
+                ssInfo.drag = obj.aero.drag(longVel);
+                ssInfo.long_load_transfer = (sum(T)/obj.R-ssInfo.drag)*(obj.h_g/obj.W_b);
+            end
         end
         
         function plotGG(car)
@@ -381,11 +589,13 @@ classdef Car
         % output ceq: constrains certain accelerations to 0 to satisfy
         %   steady-state conditions
         
-        function [c,ceq] = constraint1(obj,P)            
+        function [c,ceq] = constraint1(obj,P)
             % no lateral acceleration constraint
-            % used for optimizing longitudinal acceleration/braking           
-            P(9) = P(8);
-            
+            % used for optimizing longitudinal acceleration/braking
+            % note: callers that want symmetric rear slip (kappa_4 = kappa_3)
+            % must impose it through Aeq, not here -- the objective and the
+            % constraints have to evaluate the same state vector
+
             [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
                 Fzvirtual,Fz,alpha,T] = obj.equations(P);
             c = [engine_rpm-13000,abs(beta)-20,-Fzvirtual(1:4)];
@@ -421,7 +631,7 @@ classdef Car
             [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
                 Fzvirtual,Fz,alpha,T]...
                 = obj.equations(P);
-            c = [engine_rpm-13000,abs(beta)-20,-Fzvirtual(1:2)];
+            c = [engine_rpm-13000,abs(beta)-20,-Fzvirtual(1:4)];
             ceq = [P(3)*P(5)-lat_accel_value,lat_accel,yaw_accel,wheel_accel(1:4)];
         end
         
@@ -482,15 +692,16 @@ classdef Car
             [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
                 Fzvirtual,Fz,alpha,T]...
                 = obj.equations(P);
-            c = [engine_rpm-13000,abs(beta)-20,-Fzvirtual(1:2)];
+            c = [engine_rpm-13000,abs(beta)-20,-Fzvirtual(1:4)];
             ceq = [P(3)*P(5)-lat_accel_value,P(3)/P(5)-radius, yaw_accel, wheel_accel(1:4)];
         end
         
         % objective function
         function out = long_accel(obj,P)
-            % used for optimizing longitudinal acceleration            
-            P(9) = P(8);
-            
+            % used for optimizing longitudinal acceleration
+            % evaluates P exactly as given: fmincon's objective must see the
+            % same state as its nonlinear constraints
+
             [engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
                 Fzvirtual,Fz,alpha,T]...
                 = obj.equations(P);

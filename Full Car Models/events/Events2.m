@@ -19,10 +19,26 @@ classdef Events2 < handle
         
         % contains info used for interpolation in autocross/accel solvers
         interp_info
+
+        % course geometry, lap counts, driver calibration and scoring
+        % reference times -- see carConfig
+        eventParams
     end
-    
+
     methods
-        function obj = Events2(car,accelCar)
+        function obj = Events2(car,accelCar,eventParams)
+            if nargin < 3 || isempty(eventParams)
+                error('Events2:noEventParams', ...
+                    ['event parameters are required. They used to be ' ...
+                     'hard-coded in this file -- the x1.05 autocross ' ...
+                     'factor, the x1.085 endurance factor, the skidpad ' ...
+                     'radius, the accel length, the lap count and the ' ...
+                     'scoring reference times -- and now live in carConfig ' ...
+                     'so there is one place to change them:\n' ...
+                     '    [carCell,eventParams] = carConfig();\n' ...
+                     '    ev = Events2(carCell{1,1},carCell{1,2},eventParams);']);
+            end
+            obj.eventParams = eventParams;
             obj.car = car;
             obj.accelCar = accelCar;
             
@@ -32,9 +48,24 @@ classdef Events2 < handle
             load('2024endurancetrack.mat');
             obj.endurance_track = [arclength; curvature];
             
-            % sweep for max velocity for given radius
-            % used for interpolation in Autocross
-            [x_table_corner_vel,radius_vector,max_vel_corner_vector] = vel_cornering_sweep(obj.car);
+            % Max velocity for given radius, used to cap speed through every
+            % corner in Autocross and Endurance.
+            %
+            % Read off the g-g when there is one. Track_Solver clips lap
+            % velocity to this table at every station while the g-g supplies
+            % the longitudinal capability, so the two have to be the same
+            % envelope -- solved separately by max_vel_cornering and
+            % max_lat_accel they were not, by up to 0.844 m/s^2, and the clip
+            % then parked the interpolant query outside the hull where
+            % create_scattered_interpolants2 clamped it silently. Cars that
+            % never went through makeGG still solve the table on their own.
+            if isempty(obj.car.ss_info)
+                [x_table_corner_vel,radius_vector,max_vel_corner_vector] = ...
+                    vel_cornering_sweep(obj.car);
+            else
+                [x_table_corner_vel,radius_vector,max_vel_corner_vector] = ...
+                    vel_cornering_from_gg(obj.car);
+            end
             
             obj.interp_info.x_table_corner_vel = x_table_corner_vel;
             obj.interp_info.radius_vector = radius_vector;
@@ -60,11 +91,9 @@ classdef Events2 < handle
         
         function [x_table_skid,maxVel,time] = Skidpad(obj)
             % modelled as pure steady state (no longitudinal acceleration)
-            % inner radius of skidpad is 7.625 m
-            % width of skidpad is 3 m
-            % old lapsim used 8.55 radius - essentially means ~ 1 ft gap from cones
-
-            radius = 8.5;
+            % inner radius of skidpad is 7.625 m, width 3 m -- the path radius
+            % is a driving choice, so it comes from carConfig
+            radius = obj.eventParams.skidpad_radius;
             [x_table_skid,maxVel,time] = max_skidpad_vel(radius,obj.car);
             obj.times.skidpad = time;
             obj.skidpad.x_table_skid = x_table_skid;
@@ -84,7 +113,7 @@ classdef Events2 < handle
             ay_multiple = zeros(num_vel, 1);
             steer_angle_multiple = zeros(num_vel, 1);
             
-            radius = 8.5;
+            radius = obj.eventParams.skidpad_radius;
             % Iterate over the velocities
             for i = 1:num_vel
                 vel = vel_list(i);
@@ -109,21 +138,21 @@ classdef Events2 < handle
         end
 
         function [time,ending_vel,long_accel_vector,long_vel_vector] = Accel(obj)
-            % car starts 0.3 m behind starting line
-            % accel is 75 m long
-            
+            % the car rolls up to the timing line, then the timed run starts;
+            % both distances come from carConfig
+
              long_vel = 0;
-                      
+
              long_vel_interp = obj.interp_info.long_vel_guess;
              long_accel_interp = obj.interp_info.long_accel_matrix;
-             
-              [~,ending_vel,~,~] = straight(long_vel,2.19,long_vel_interp,...
+
+              [~,ending_vel,~,~] = straight(long_vel,obj.eventParams.accel_rollout,long_vel_interp,...
                   long_accel_interp,obj.accelCar.max_vel,obj.accelCar);
-              
-              % starting velocity for accel is ending velocity of 0.3 straight
+
+              % starting velocity for the timed run is the rollout exit speed
               long_vel = ending_vel;
-            
-            [time_vec,ending_vel,long_accel_vector,long_vel_vector] = straight(long_vel,75,...
+
+            [time_vec,ending_vel,long_accel_vector,long_vel_vector] = straight(long_vel,obj.eventParams.accel_length,...
                 long_vel_interp,long_accel_interp,obj.accelCar.max_vel,obj.accelCar);
             obj.times.accel = time_vec(end);
             obj.accel.time_vec = time_vec;
@@ -159,16 +188,24 @@ classdef Events2 < handle
             obj.interp_info.max_F_accel = F_accel;
             obj.interp_info.max_F_braking = F_braking;
 
+            % hoisted out of the sample loops: the cornering cap is evaluated
+            % twice per track sample (2 x 1e5 per solve) and a property lookup
+            % through the handle object costs more there than the interpolation
+            radius_vector = obj.interp_info.radius_vector;
+            max_vel_corner_vector = obj.interp_info.max_vel_corner_vector;
+            v_top = obj.car.max_vel;
+
             % Maximum possible acceleration between apexes
             % calculating velocity and acceleration profiles as well as time
             
-            % car starts 6 m behind starting line
+            % car starts track_rollout metres behind the starting line
             long_vel = 0;
 
             if rollout
                 long_vel_interp = obj.interp_info.long_vel_guess;
                 long_accel_interp = obj.interp_info.long_accel_matrix;
-                [~,ending_vel,~,~] = straight(0,6,long_vel_interp,long_accel_interp,obj.car.max_vel,obj.car);%TEMP 150 for socal
+                [~,ending_vel,~,~] = straight(0,obj.eventParams.track_rollout, ...
+                    long_vel_interp,long_accel_interp,obj.car.max_vel,obj.car);
     
                 % starting velocity is ending velocity of straight
                 long_vel = ending_vel;
@@ -189,7 +226,6 @@ classdef Events2 < handle
             time_2 = [];
 
             last_index_1 = 1;
-            last_index_2 = 1;
 
             num_upshifts = 0;
 
@@ -228,71 +264,80 @@ classdef Events2 < handle
                     long_vel_initial = long_vel;
                     long_vel_vector_1(i) = long_vel_initial;
                     long_vel = sqrt(long_vel^2+2*long_accel*(arclength(i+1)-arclength(i)));
-                    % can't exceed max possible velocity for given radius
-                    
-                    %{
-                    long_vel = min(long_vel,lininterp1(obj.interp_info.radius_vector,obj.interp_info.max_vel_corner_vector,...
-                        abs(1/curvature(i))));
-                    %}
+
+                    % A quasi-steady-state profile has to respect the local
+                    % lateral limit at EVERY station, not only at the apexes
+                    % findpeaks happened to pick out. curvature(i) is the right
+                    % index: arclength had a 0 prepended, so this step spans
+                    % arclength_orig(i-1) -> arclength_orig(i) and the velocity
+                    % just produced sits at arclength_orig(i), which is where
+                    % curvature(i) lives.
+                    % This makes autocross and endurance SLOWER -- it takes back
+                    % lap time the car could never have had.
+                    long_vel = min(long_vel,corner_vel_cap(radius_vector, ...
+                        max_vel_corner_vector,v_top,curvature(i)));
 
                     time_1(i) = 2*(arclength(i+1)-arclength(i))/(long_vel+long_vel_initial);
                 end
 
                 % start next segment from end of current segment
                 last_index_1 = extrema_indices(j);
+            end
 
-                % for braking calculate backwards from the apex velocity of the segment end
-                long_vel = apex_velocity(j);  % reset velocity at apex
-                current_gear = find(long_vel < obj.car.powertrain.switch_gear_velocities, 1);  % initialize gear
-                if isempty(current_gear)
-                    current_gear = length(obj.car.powertrain.switch_gear_velocities);
-                end
-                
-                downshift_timer = 0;
-                is_downshifting = false;
-                
-                for i = extrema_indices(j):-1:last_index_2  % backward loop
-                    % Compute lateral acceleration
-                    lat_accel = long_vel^2 * abs(curvature(i));
-                    lat_accel_vector_2(i) = lat_accel * sign(curvature(i));
-                
-                    % Apply downshift delay logic
-                    if is_downshifting
-                        downshift_timer = downshift_timer - time_2(i+1);  % subtract previous time step
-                        if downshift_timer <= 0
-                            current_gear = max(current_gear - 1, 1);
-                            is_downshifting = false;
-                        end
-                    elseif current_gear > 1 && long_vel < obj.car.powertrain.switch_gear_velocities(current_gear - 1)
-                        is_downshifting = true;
-                        downshift_timer = 0.150;  % 150 ms delay
-                    end
-                
-                    % Compute braking acceleration
-                    long_accel = F_braking(lat_accel, long_vel);
-                    if long_vel == obj.car.max_vel
-                        long_accel = 0;
-                    end
-                
-                    long_accel_vector_2(i) = long_accel;
-                    long_vel_initial = long_vel;
-                    long_vel_vector_2(i) = long_vel_initial;
-                    long_vel = sqrt(max(long_vel^2 - 2 * long_accel * (arclength(i+1) - arclength(i)), 0));
-                
-                    time_2(i) = 2 * (arclength(i+1) - arclength(i)) / (long_vel + long_vel_initial);
+            % Braking is ONE continuous pass over the whole track, seeded at
+            % the end and clipped to the local limit at every station.
+            %
+            % It used to restart at every apex and integrate back only as far
+            % as the previous one. With findpeaks returning 1615 apexes over
+            % 703 m -- median spacing 9.6 mm -- that gave the car less than a
+            % centimetre to shed speed for most corners, so the profile simply
+            % stepped down at the apex instead of braking into it. Measured on
+            % the 2024 autocross, the returned profile demanded 7275 m/s^2
+            % (742 g) at its worst and exceeded the car's own solved peak
+            % braking at 3 stations, and its biggest single-sample drop was
+            % 2.822 m/s in 7.8 mm. One global pass demands at most 20.8 m/s^2
+            % on autocross and 22.0 on endurance, both inside the solved peak
+            % of 23.0, and its biggest drop is 0.010 m/s. It costs +0.025 s of
+            % autocross and +3.27 s of endurance.
+            %
+            % The gear bookkeeping that used to live in this loop went with it.
+            % It was dead: F_braking takes only (lat_accel, long_vel), so
+            % current_gear was maintained every sample and never read.
+            %
+            % apex_velocity no longer seeds anything. It is still computed
+            % above because interp_info publishes it for the plots.
+            long_vel = corner_vel_cap(radius_vector,max_vel_corner_vector, ...
+                v_top,curvature(end));
+            for i = numel(curvature):-1:1
+                lat_accel = long_vel^2 * abs(curvature(i));
+                lat_accel_vector_2(i) = lat_accel * sign(curvature(i));
+
+                long_accel = F_braking(lat_accel, long_vel);
+                if long_vel == obj.car.max_vel
+                    long_accel = 0;
                 end
 
+                long_accel_vector_2(i) = long_accel;
+                long_vel_initial = long_vel;
+                long_vel_vector_2(i) = long_vel_initial;
+                long_vel = sqrt(max(long_vel^2 - 2 * long_accel * (arclength(i+1) - arclength(i)), 0));
 
-                % end next calculation at end of current segment
-                last_index_2 = extrema_indices(j);
+                % The same cap going backwards, and it matters more here.
+                % The backward recursion has no other ceiling -- the
+                % long_vel == max_vel guard above is a float equality that
+                % never fires -- so an unclipped speed feeds F_braking a point
+                % well outside the g-g cloud, the extrapolation there returned
+                % a POSITIVE longitudinal acceleration, and the backward speed
+                % then ran away instead of settling. It reached 39.55 m/s
+                % against a max_vel of 33.06, asking for 8.0 g of lateral
+                % against a 1.94 g envelope.
+                long_vel = min(long_vel,corner_vel_cap(radius_vector, ...
+                    max_vel_corner_vector,v_top,curvature(i)));
 
-                % if apex velocity can not be reached, e.g. segment is too short to
-                %   reach apex velocity, then the ending velocity is the velocity
-                %   reached during acceleration
-                long_vel = min(long_vel_vector_1(end),long_vel_vector_2(end));
+                time_2(i) = 2 * (arclength(i+1) - arclength(i)) / (long_vel + long_vel_initial);
+            end
 
-            end  
-            
+
             % final longitudinal velocity is minimum of acceleration and braking
             %   velocity profiles
             long_vel_final = min(long_vel_vector_1,long_vel_vector_2);
@@ -316,7 +361,7 @@ classdef Events2 < handle
             curvature = obj.autocross_track(2,:);
             [long_vel_final,long_accel_final,lat_accel_final,time_final,time_vec,num_upshifts] = ...
                 Track_Solver(obj,arclength,curvature, true, 0);
-            obj.times.autocross = time_final*1.05;
+            obj.times.autocross = time_final*obj.eventParams.driver_factor_autocross;
             obj.autocross.time_vec = time_vec;
             obj.autocross.num_upshifts = num_upshifts;
             obj.autocross.long_vel = long_vel_final;
@@ -343,8 +388,11 @@ classdef Events2 < handle
             end_vel = long_vel_final(end);
             [long_vel_final,long_accel_final,lat_accel_final,time_final,time_vec,num_upshifts] = ...
                 Track_Solver(obj,arclength,curvature, false, end_vel);
-            time_total = time_total + (time_final*9); % 10 laps in endurance
-            obj.times.endurance = time_total*1.085; % scaling factor due to driver conservatism during enduro
+            % lap 1 starts from a standstill and is solved separately; every
+            % remaining lap is the steady one, entered at the previous lap's
+            % exit speed
+            time_total = time_total + time_final*(obj.eventParams.endurance_laps-1);
+            obj.times.endurance = time_total*obj.eventParams.driver_factor_endurance;
             obj.endurance.time_vec = time_vec;
             obj.endurance.num_upshifts = num_upshifts;
             obj.endurance.long_vel = long_vel_final;
@@ -369,13 +417,12 @@ classdef Events2 < handle
             % B24 points
             % skidpad: 58.9, accel: 54.9, autocross: 113.1, enduro: 262.3
 
-            % winning time (Michigan 2016, no one faster since)
-            skidpad_winning_time = 5.18; 
-            
-            % winning times (based on 2019 Lincoln)
-            accel_winning_time = 4.206;% Michigan 2023 (4.174) // Michigan 2024 (4.206)
-            autocross_winning_time = 46.911; % This is sorta fudged. Michigan 2023 (45.886) // Michigan 2024 (46.911)
-            endurance_winning_time = 1389.891;% Michigan 2023 (1310.978) // Michigan 2024 (1389.891)
+            % reference times the FSAE formulas score against -- per event,
+            % not per car, so they come from carConfig
+            skidpad_winning_time   = obj.eventParams.winning_time.skidpad;
+            accel_winning_time     = obj.eventParams.winning_time.accel;
+            autocross_winning_time = obj.eventParams.winning_time.autocross;
+            endurance_winning_time = obj.eventParams.winning_time.endurance;
 
             % skidpad
             t_your = obj.times.skidpad;
@@ -431,5 +478,15 @@ classdef Events2 < handle
             obj.points = points;
         end
     end
+end
+
+function v_cap = corner_vel_cap(radius_vector,max_vel_corner_vector,v_top,curvature)
+
+radius = abs(1/curvature);
+if radius >= radius_vector(end)
+    v_cap = v_top;
+else
+    v_cap = min(lininterp1(radius_vector,max_vel_corner_vector,radius),v_top);
+end
 end
 

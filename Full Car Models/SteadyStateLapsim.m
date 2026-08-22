@@ -15,11 +15,12 @@ setup_paths
 carCells = [];
 
 
-carCell = carConfig(); %generate all cars to sim over
+[carCell,eventParams] = carConfig(); %generate all cars to sim over
 
 numCars = size(carCell,1);
 time = struct();time.prev = 0; time.curr = 0;
 tic
+job = simLog.start('steady-state lapsim');
 % Set numWorkers to number of cores for better performance
 numWorkers = 16;
 if numCars == 1
@@ -51,7 +52,7 @@ parfor i = 1:numCars
     car = carCell{i, 1};
     accelCar = carCell{i, 2};
     car = makeGG(paramsArr{i,1},car); %post-processes gg data and stores in car
-    comp = Events2(car,accelCar);
+    comp = Events2(car,accelCar,eventParams);
     comp.calcTimes();       %run events and calc points
     car.comp = comp;        %store in array
     carOut{i,1} = car; %put updated car back into array. Matlab is pass by value, not pass by reference
@@ -62,6 +63,16 @@ time.curr = floor(toc);
 fprintf("Stage Time: %d s; Total time elapsed: %d s\n",[time.curr-time.prev time.curr]);
 fprintf("done\n");
 carCell = carOut;
+
+% one row for the whole g-g + events pass. With a single car the event times
+% and the car go in the row; a multi-car run logs the count and leaves the
+% per-event columns empty (they differ by car -- read them off carCell).
+logArgs = {'events','g-g+skidpad+accel+autocross+endurance', ...
+    'workers',numWorkers,'nCases',numCars};
+if numCars == 1
+    logArgs = [logArgs, {'times',carCell{1,1}.comp.times,'car',carCell{1,1}}];
+end
+simLog.finish(job,logArgs{:});
 
 
 %% Points Plotting

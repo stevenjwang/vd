@@ -68,4 +68,6 @@ betaR = [ ...
     getb(mdlR,'steer2'); ...
     getb(mdlR,'cross') ];
 
-save camber_models_fast.mat betaL betaR
+% save next to Camber_Evaluation.m so it stays on the Full Car Models path,
+% regardless of the current working directory when this script is run
+save(fullfile(fileparts(which('Camber_Evaluation')),'camber_models_fast.mat'),'betaL','betaR')
