@@ -18,8 +18,7 @@ if nargin < 1 || isempty(samplingType), samplingType = "FullFactorial"; end
 if nargin < 2, numSamples = []; end
 
 % car parameters (updated 2/4/21)
-carParams = struct();
-carParams.mass = 162; % not including driver (366 lb)
+carParams.mass = [162]; % not including driver (366 lb)
 carParams.driver_weight = 64; %
 carParams.accel_driver_weight = 59; % (130 lb)
 carParams.wheelbase = 62*0.0254; % 62 in
