@@ -77,6 +77,7 @@ sideslip_rate_deg = rad2deg(yaw_rate_lataccel_deg - yaw_rate_meas_deg);
 %% --- Plots ---
 
 % Subplot 1: Yaw Rate Overlays
+figure();
 subplot(4,1,1);
 plot(time_can, yaw_rate_meas_deg, 'DisplayName', 'Measured');
 hold on;
