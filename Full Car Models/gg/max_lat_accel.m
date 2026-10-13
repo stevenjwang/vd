@@ -1,4 +1,5 @@
-function [x_ss,lat_accel,long_accel,lat_accel_guess] = max_lat_accel(long_vel_guess,car,x0)
+function [x_ss,lat_accel,long_accel,lat_accel_guess,diagnostics] = ...
+        max_lat_accel(long_vel_guess,car,x0,solverOptions)
 % uses fmincon to maximize lateral acceleration at a fixed longitudinal
 % velocity, with no longitudinal acceleration constraint
 %
@@ -43,6 +44,7 @@ function [x_ss,lat_accel,long_accel,lat_accel_guess] = max_lat_accel(long_vel_gu
 % exactly the wrong answer.
 
 FEAS_TOL = 1e-6;
+if nargin < 4 || isempty(solverOptions), solverOptions = struct(); end
 
 % Starts, tried in order. The analytic one comes from the kinematics rather
 % than from a constant: at the lateral limit a_y = v * yaw_rate, so the yaw
@@ -58,11 +60,12 @@ else
     seeds{end+1} = [10; 0; long_vel_guess; 0.1; 0.5; 0; 0; 0; 0]';
 end
 yaw_rate_seed = min(1.5*9.81/long_vel_guess, 2);
-steer_seed    = min(max(rad2deg(car.W_b*yaw_rate_seed/long_vel_guess),0), 25);
+steer_seed    = min(max(rad2deg(car.W_b*yaw_rate_seed/long_vel_guess),0), ...
+    car.qssSteeringLimitDeg);
 seeds{end+1}  = [steer_seed; 0; long_vel_guess; -0.3; yaw_rate_seed; 0; 0; 0; 0]';
 
 % bounds
-steer_angle_bounds = [0,25];
+steer_angle_bounds = [0,car.qssSteeringLimitDeg];
 throttle_bounds = [0,0];
 long_vel_bounds = [long_vel_guess,long_vel_guess];
 lat_vel_bounds = [-3,3];
@@ -89,23 +92,30 @@ ub = [steer_angle_bounds(2),throttle_bounds(2),long_vel_bounds(2),lat_vel_bounds
 % The cap is a backstop now rather than the mechanism. With two starts a solve
 % that runs away on one of them is rescued by the other, so this only has to
 % be generous enough not to truncate a solve that is genuinely converging.
-opts = setOptimoptions(5000);
+opts = lateralSolverOptions(solverOptions,5000);
 
 % objective function: longitudinal velocity times yaw rate (v*v/r = v^2/r)
 f = @(P) -P(3)*P(5);
 
-% no longitudinal acceleration constraint
-constraint = @(P) car.constraint1(P);
+% no longitudinal acceleration constraint.  Keep the coupled ride-height
+% context in the evaluator so objective/constraint calls and nearby optimizer
+% iterates do not repeatedly cold-start the aero fixed point.
+evaluator = steadyStateEvaluator(car);
+constraint = @(P) steadyStateConstraint1(evaluator.evaluate(P));
 
 x = []; exitflag = 0; bestVal = -inf; bestRes = inf;
+functionEvaluations = 0;
 for k = 1:numel(seeds)
-    [xk,~,flagk] = fmincon(f,seeds{k},A,b,Aeq,beq,lb,ub,constraint,opts);
+    [xk,~,flagk,outputk] = fmincon(f,seeds{k},A,b,Aeq,beq,lb,ub,constraint,opts);
+    if isstruct(outputk) && isfield(outputk,'funcCount')
+        functionEvaluations = functionEvaluations + outputk.funcCount;
+    end
 
     % one extra constraint evaluation per candidate, against several hundred
     % inside the solve -- the residual is what the selection turns on and
     % fmincon does not hand it back
     [ck,ceqk] = constraint(xk);
-    resk = max([max(abs(ceqk)), max(ck), 0]);
+    resk = qssConstraintResidual(ck,ceqk);
     valk = xk(3)*xk(5);
 
     if isempty(x) || preferNew(flagk,resk,valk,exitflag,bestRes,bestVal,FEAS_TOL)
@@ -113,8 +123,21 @@ for k = 1:numel(seeds)
     end
 end
 
-[engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
-Fzvirtual,Fz,alpha,T] = car.equations(x); %#ok<ASGLU>
+fullState = evaluator.evaluateFull(x);
+engine_rpm = fullState.engineRpm;
+beta = fullState.beta;
+long_accel = fullState.longAccel;
+omega = fullState.omega;
+current_gear = fullState.currentGear;
+Fzvirtual = fullState.Fzvirtual;
+Fz = fullState.Fz;
+alpha = fullState.alpha;
+T = fullState.T;
+
+diagnostics = struct('exitflag',exitflag,'residual',bestRes, ...
+    'valid',qssCandidateValidity(exitflag,bestRes,FEAS_TOL), ...
+    'functionEvaluations',functionEvaluations, ...
+    'equationCalls',evaluator.equationCalls());
 
 lat_accel_guess = x;
 
@@ -127,6 +150,30 @@ lat_accel = x(3)*x(5);
 
 end
 
+function opts = lateralSolverOptions(solverOptions,defaultEvaluations)
+maxEvaluations = defaultEvaluations;
+constraintTolerance = 1e-2;
+stepTolerance = 1e-10;
+displayMode = 'off';
+if isstruct(solverOptions) && isscalar(solverOptions)
+    if isfield(solverOptions,'maxFunctionEvaluations')
+        maxEvaluations = solverOptions.maxFunctionEvaluations;
+    end
+    if isfield(solverOptions,'constraintTolerance')
+        constraintTolerance = solverOptions.constraintTolerance;
+    end
+    if isfield(solverOptions,'stepTolerance')
+        stepTolerance = solverOptions.stepTolerance;
+    end
+    if isfield(solverOptions,'display')
+        displayMode = char(solverOptions.display);
+    end
+end
+opts = optimoptions('fmincon','MaxFunctionEvaluations',double(maxEvaluations), ...
+    'ConstraintTolerance',double(constraintTolerance), ...
+    'StepTolerance',double(stepTolerance),'Display',displayMode);
+end
+
 
 function take = preferNew(flag,res,val,bFlag,bRes,bVal,tol)
 % Feasibility first, objective value only between two solves that both cleared
@@ -134,18 +181,9 @@ function take = preferNew(flag,res,val,bFlag,bRes,bVal,tol)
 % constraint boundary win, since those report MORE lateral acceleration, not
 % less; ranking on residual alone would accept a trivially feasible but badly
 % suboptimal point.
-okNew = (flag == 1) || (flag == 2);
-okOld = (bFlag == 1) || (bFlag == 2);
-if okNew ~= okOld, take = okNew; return, end     % a converged solve always wins
-if ~okNew,         take = res < bRes; return, end % neither: less infeasible
-
-goodNew = res <= tol;
-goodOld = bRes <= tol;
-if goodNew && goodOld
-    take = val > bVal;                            % both legal -> more grip wins
-elseif goodNew ~= goodOld
-    take = goodNew;                               % only one is legal
-else
-    take = res < bRes;                            % neither legal -> less illegal
-end
+okNew = qssCandidateValidity(flag,res,tol);
+okOld = qssCandidateValidity(bFlag,bRes,tol);
+if okNew ~= okOld, take = okNew; return, end
+if okNew, take = val > bVal; return, end
+take = res < bRes;
 end

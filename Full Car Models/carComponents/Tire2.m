@@ -10,28 +10,34 @@ classdef Tire2
         camber4indices
         camber2ratio
         camber4ratio
+        camberInterpolator
 
     end
 
     methods
-        function obj = Tire2(p_i,Fx_parameters,Fy_parameters,friction_scaling_factor)
+        function obj = Tire2(p_i,Fx_parameters,Fy_parameters,friction_scaling_factor,camberData)
             %obj.gamma = gamma;
             obj.p_i = p_i;
             obj.Fx_parameters = Fx_parameters;
             obj.Fy_parameters = Fy_parameters;
             obj.friction_scaling_factor = friction_scaling_factor;
-            % named explicitly: a bare load() drops whatever the file holds
-            % into this scope and would shadow any same-named function
-            c = load("camberratiossmoothed.mat", ...
-                'camber2indices','camber4indices','camber2ratio','camber4ratio');
+            if nargin < 5 || isempty(camberData)
+                componentRoot = fileparts(mfilename('fullpath'));
+                camberData = load(fullfile(componentRoot,'camberratiossmoothed.mat'), ...
+                    'camber2indices','camber4indices','camber2ratio','camber4ratio');
+            end
+            c = camberData;
             obj.camber2indices = c.camber2indices;
             obj.camber4indices = c.camber4indices;
             obj.camber2ratio = c.camber2ratio;
             obj.camber4ratio = c.camber4ratio;
+            obj.camberInterpolator = obj.buildCamberInterp();
         end
 
         function out = F_y(obj,alpha,kappa,F_z,gamma)
-            cambershiftMod = 16.125*gamma*(F_z/250);
+            outputSize = size(alpha);
+            alpha = alpha(:); kappa = kappa(:); F_z = F_z(:); gamma = gamma(:);
+            cambershiftMod = 16.125.*gamma.*(F_z/250);
 
             % Camber multiplier: bilinear over (alpha, gamma) on the smoothed
             % ratio tables. This used to be five interp1 calls -- four in
@@ -47,12 +53,10 @@ classdef Tire2
             % resampling a piecewise-linear function onto a superset of its
             % own breakpoints is exact.
             %
-            % Held in a persistent, not a property: the tables come from a
-            % fixed file and are the same for every tire, and a new property
-            % would break every Tire2 already saved inside a .mat sweep cache.
-            persistent camberF warnedNaN
-            if isempty(camberF)
+            if isempty(obj.camberInterpolator)
                 camberF = buildCamberInterp(obj);
+            else
+                camberF = obj.camberInterpolator;
             end
             cambermultiplier = camberF(alpha,gamma);
 
@@ -60,10 +64,11 @@ classdef Tire2
 
             alpha = alpha*0.0174533; %degrees to radians
             F_z = F_z*0.224809; %N to lbf
+            invalidLoad = F_z <= 0;
+            F_z = max(F_z,1e-6);
 
             F_z0 = 200; %nominal load
             p_i0 = 13;  %nominal pressure
-            F_z = abs(F_z);
 
             df_z = (F_z- F_z0)./F_z;
             dp_i = (obj.p_i-p_i0)./obj.p_i;
@@ -169,39 +174,41 @@ classdef Tire2
 
             %Lateral Force
             F_y = D_y.*sin(C_y.*atan(B_y.*alpha_y-E_y.*(B_y.*alpha_y-atan(B_y.*alpha_y))))+S_vy;
-            F_y = transpose(G_ykappa.*F_y+S_vykappa);
+            F_y = G_ykappa.*F_y+S_vykappa;
 
-            F_y(F_z==0) = 0; %zero load
+            F_y(invalidLoad) = 0; %contact loss / zero load
 
             F_y2 = F_y.*4.44822.*obj.friction_scaling_factor; %lbf to N, scaled
             out = F_y2.*cambermultiplier + cambershiftMod;
+            out(invalidLoad) = 0;
             % A NaN here means the tire model produced garbage and fmincon is
             % about to search on it. This used to disp() three unlabelled
             % lines with no clue which corner or state caused it -- inside a
             % parfor g-g that is thousands of lines of noise that identify
             % nothing. Report the inputs, once, under an ID that can be muted
             % with warning('off','Tire2:nanForce').
-            if isnan(out)
-                if isempty(warnedNaN)
-                    warnedNaN = true;
-                    warning('Tire2:nanForce', ...
-                        ['F_y returned NaN: alpha=%g deg, kappa=%g, F_z=%g N, ' ...
-                         'gamma=%g deg (pre-camber F_y2=%g). Reported once per ' ...
-                         'session.'], alpha/0.0174533, kappa, F_z/0.224809, ...
-                         cambershiftMod, F_y2);
-                end
+            if any(isnan(out(:)))
+                warning('Tire2:nanForce', ...
+                    ['F_y returned NaN: alpha=%g deg, kappa=%g, F_z=%g N, ' ...
+                     'gamma=%g deg (pre-camber F_y2=%g).'], alpha/0.0174533, ...
+                    kappa(1), F_z(1)/0.224809, cambershiftMod(1), F_y2(1));
             end
+            out = reshape(out,outputSize);
         end
 
         function out = F_x(obj,alpha,kappa,F_z, gamma)
 
+            outputSize = size(alpha);
+            alpha = alpha(:); kappa = kappa(:); F_z = F_z(:); gamma = gamma(:);
+
             gamma = gamma*0.0174533; %degrees to radians
             alpha_f = alpha*0.0174533; %degrees to radians
             F_z = F_z*0.224809; %N to lbf
+            invalidLoad = F_z <= 0;
+            F_z = max(F_z,1e-6);
 
             F_z0 = 200; %nominal load
             p_i0 = 13;  %nominal pressure
-            F_z = abs(F_z);
 
             df_z = (F_z- F_z0)./F_z;
             dp_i = (obj.p_i-p_i0)./obj.p_i;
@@ -254,9 +261,7 @@ classdef Tire2
             mu_x = (p_dx1+p_dx2.*df_z).*(1-p_dx3.*gamma.^2).*(1+p_px3.*dp_i+p_px4.*dp_i.^2).*lambda_mux;
 
             K_xkappa = (p_kx1+p_kx2.*df_z).*exp(p_kx3.*df_z).*(1+p_px1.*dp_i+p_px2.*dp_i.^2).*F_z.*lambda_kxkappa;
-            if ~isfinite(K_xkappa)
-                K_xkappa = 1e200;
-            end
+            K_xkappa(~isfinite(K_xkappa)) = 1e200;
             S_hx = (p_hx1+p_hx2.*df_z).*lambda_hx;
             S_vx = (p_vx1+p_vx2.*df_z).*F_z.*lambda_vx.*lambda_mux;
             kappa_x = kappa + S_hx;
@@ -276,11 +281,13 @@ classdef Tire2
                 .*(B_xalpha.*S_hxalpha - atan(B_xalpha.*S_hxalpha))));
 
             %Longitudinal Force
-            F_x = transpose((D_x.*sin(C_x.*atan(B_x.*kappa_x-E_x.*(B_x.*kappa_x-atan(B_x.*kappa_x))))+S_vx).*G_xalpha);
+            F_x = (D_x.*sin(C_x.*atan(B_x.*kappa_x-E_x.*(B_x.*kappa_x-atan(B_x.*kappa_x))))+S_vx).*G_xalpha;
 
-            F_x(F_z==0) = 0; %zero load
+            F_x(invalidLoad) = 0; %contact loss / zero load
 
             out = F_x*4.44822*obj.friction_scaling_factor; %lbf to N, scaled
+            out(invalidLoad) = 0;
+            out = reshape(out,outputSize);
 
         end
 

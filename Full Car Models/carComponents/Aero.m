@@ -53,10 +53,38 @@ classdef Aero
                 out = struct('cla',obj.cla,'cda',obj.cda, ...
                     'D_f',obj.D_f,'D_r',obj.D_r, ...
                     'frontOffsetIn',frontOffsetIn,'rearOffsetIn',rearOffsetIn, ...
-                    'outsideMap',false);
+                    'outsideMap',false,'coverageValid',true);
+            end
+        end
+
+        function [cla,cda,D_f,D_r,outsideMap,coverageValid] = coefficientsNumeric(obj,frontOffsetIn,rearOffsetIn)
+            %COEFFICIENTSNUMERIC Numeric hot-path equivalent of coefficients().
+            if obj.hasMap()
+                if nargout >= 6
+                    [cla,cda,D_f,D_r,outsideMap,coverageValid] = ...
+                        obj.map.evaluateNumeric(frontOffsetIn,rearOffsetIn);
+                else
+                    [cla,cda,D_f,D_r,outsideMap] = ...
+                        obj.map.evaluateNumeric(frontOffsetIn,rearOffsetIn);
+                    coverageValid = true(size(cla));
+                end
+            else
+                if isscalar(frontOffsetIn) && ~isscalar(rearOffsetIn)
+                    frontOffsetIn = repmat(frontOffsetIn,size(rearOffsetIn));
+                elseif isscalar(rearOffsetIn) && ~isscalar(frontOffsetIn)
+                    rearOffsetIn = repmat(rearOffsetIn,size(frontOffsetIn));
+                elseif ~isequal(size(frontOffsetIn),size(rearOffsetIn))
+                    error('Aero:querySizeMismatch', ...
+                        'Front and rear offsets must have equal sizes or be scalar.');
+                end
+                cla = repmat(obj.cla,size(frontOffsetIn));
+                cda = repmat(obj.cda,size(frontOffsetIn));
+                D_f = repmat(obj.D_f,size(frontOffsetIn));
+                D_r = repmat(obj.D_r,size(frontOffsetIn));
+                outsideMap = false(size(frontOffsetIn));
+                coverageValid = true(size(frontOffsetIn));
             end
         end
     end
     
 end
-

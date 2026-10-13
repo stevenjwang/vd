@@ -1,4 +1,4 @@
-function [carCell,eventParams,designTable,baselineTable] = carConfig(samplingType,numSamples)
+function [carCell,eventParams,designTable,baselineTable] = carConfig(samplingType,numSamples,tireModel,uncertaintyMode)
 % outputs carCell:     one car per grid combination or DOE sample,
 %                      column 1 the lap car, column 2 the accel car
 %        eventParams:  everything the dynamic events need that is NOT a
@@ -14,8 +14,12 @@ function [carCell,eventParams,designTable,baselineTable] = carConfig(samplingTyp
 %
 % Default is the calibrated baseline/full-factorial configuration. For DOE:
 %   [cars,eventParams,X] = carConfig("Explicit",overrideTable);
+%   [cars,eventParams,X] = carConfig("FullFactorial",[],"lc0_nd");
+%   [cars,eventParams,X] = carConfig("FullFactorial",[],"lc0_nd","low");
 if nargin < 1 || isempty(samplingType), samplingType = "FullFactorial"; end
 if nargin < 2, numSamples = []; end
+if nargin < 3 || isempty(tireModel), tireModel = "legacy"; end
+if nargin < 4 || isempty(uncertaintyMode), uncertaintyMode = "nominal"; end
 
 % car parameters (updated 2/4/21)
 carParams.mass = [162]; % not including driver (366 lb)
@@ -68,6 +72,9 @@ carParams.I_driveline = 0;
 % rolling resistance, driveline inertia and whatever else.
 
 carParams.Crr = 0.014;
+% Shared QSS steering stop.  Keep this at the existing 25 degree bound until
+% a measured physical steering stop is supplied.
+carParams.qss_steering_limit_deg = 25;
 
 % Ride-height model. Rates are spring rates at the damper, with motion ratio
 % defined as shock travel / wheel travel. The map looks up height changes in
@@ -77,8 +84,11 @@ carParams.spring_rate_front_lb_in = 300;
 carParams.spring_rate_rear_lb_in  = 250;
 carParams.motion_ratio_front = 0.847;
 carParams.motion_ratio_rear  = 0.984;
-carParams.static_front_ride_height_in = [-0.25 0 0.25];
-carParams.static_rear_ride_height_in  = [-0.25 0 0.25];
+% Keep the default car as one calibrated baseline.  Ride-height variation is
+% generated explicitly by aeroMapStarCases rather than multiplying every
+% ordinary carConfig/DOE call into a 3-by-3 full-factorial grid.
+carParams.static_front_ride_height_in = 0;
+carParams.static_rear_ride_height_in  = 0;
 
 % aero parameters (updated 6/6/22)
 aeroParams = struct();

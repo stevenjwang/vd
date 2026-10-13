@@ -1,8 +1,9 @@
-function [x_accel,long_accel,long_accel_guess] = max_long_accel(long_vel_guess,car,x0)
+function [x_accel,long_accel,long_accel_guess,diagnostics] = ...
+    max_long_accel(long_vel_guess,car,x0,solverOptions)
 % uses fmincon to minimize the objective function subject to constraints
 % optimizes longitudinal acceleration with given lateral acceleration constraint
 % disp('max long accel');
-if nargin == 2 % no initial guess supplied
+if nargin < 3 || isempty(x0) % no initial guess supplied
     %initial guesses
     steer_angle_guess = 0;
     throttle_guess = 1;
@@ -16,6 +17,13 @@ if nargin == 2 % no initial guess supplied
     
     x0 = [steer_angle_guess,throttle_guess,long_vel_guess,lat_vel_guess,yaw_rate_guess,kappa_1_guess,...
         kappa_2_guess,kappa_3_guess,kappa_4_guess];
+end
+if nargin < 4 || isempty(solverOptions)
+    solverOptions = struct();
+end
+if ~isstruct(solverOptions) || ~isscalar(solverOptions)
+    error('max_long_accel:invalidSolverOptions', ...
+        'solverOptions must be a scalar struct.');
 end
 
 x0(3) = long_vel_guess;
@@ -46,34 +54,76 @@ lb = [steer_angle_bounds(1),throttle_bounds(1),long_vel_bounds(1),lat_vel_bounds
 ub = [steer_angle_bounds(2),throttle_bounds(2),long_vel_bounds(2),lat_vel_bounds(2),...
     yaw_rate_bounds(2),kappa_1_bounds(2),kappa_2_bounds(2),kappa_3_bounds(2),kappa_4_bounds(2)];
 
-% objective function: longitudinal acceleration (forwards)
-f = @(P) -car.long_accel(P);
-
-% no lateral acceleration constraint
-constraint = @(P) car.constraint1(P);
+% Cache the exact equation state shared by fmincon's objective and nonlinear
+% constraint callbacks. This also carries ride-height context internally when
+% mapped aero is enabled, without binding an ssInfo output as a context seed.
+evaluator = steadyStateEvaluator(car);
+f = @(P) -evaluator.evaluate(P).longAccel;
+constraint = @(P) steadyStateConstraint1(evaluator.evaluate(P));
 
 % default algorithm is interior-point
-% options = optimoptions('fmincon','MaxFunctionEvaluations',2000,'ConstraintTolerance',1e-2,...
-%     'StepTolerance',1e-10,'Display','notify-detailed');
-options = optimoptions('fmincon','MaxFunctionEvaluations',2000,'ConstraintTolerance',1e-2,...
-    'StepTolerance',1e-10,'Display','off');
+maxFunctionEvaluations = getSolverOption(solverOptions, ...
+    'maxFunctionEvaluations',2000);
+constraintTolerance = getSolverOption(solverOptions, ...
+    'constraintTolerance',1e-2);
+stepTolerance = getSolverOption(solverOptions,'stepTolerance',1e-10);
+display = getSolverOption(solverOptions,'display','off');
+algorithm = getSolverOption(solverOptions,'algorithm','interior-point');
+if isstring(display)
+    display = char(display);
+end
+if isstring(algorithm)
+    algorithm = char(algorithm);
+end
+options = optimoptions('fmincon', ...
+    'Algorithm',algorithm, ...
+    'MaxFunctionEvaluations',maxFunctionEvaluations, ...
+    'ConstraintTolerance',constraintTolerance, ...
+    'StepTolerance',stepTolerance,'Display',display);
 
 % fval: objective function value (v^2/r)
 % exitflag meaning: 1 = converged, 2 = change in x less than step tolerance
 %   (optimality condition not fulfilled, but solution still found
 %   0 = function evaluations exceeded (not converging)
 %   -2 = no feasible point found 
-[x,fval,exitflag,output,lambda,grad,hessian] = fmincon(f,x0,A,b,Aeq,beq,lb,ub,constraint,options);
+[x,fval,exitflag,~,~,~,~] = fmincon(f,x0,A,b,Aeq,beq,lb,ub,constraint,options);
 x(9) = x(8);
 
 long_accel_guess = x;
 
-[engine_rpm,beta,lat_accel,long_accel,yaw_accel,wheel_accel,omega,current_gear,...
-Fzvirtual,Fz,alpha,T] = car.equations(x);
+fullState = evaluator.evaluateFull(x);
+engine_rpm = fullState.engineRpm;
+beta = fullState.beta;
+long_accel = fullState.longAccel;
+omega = fullState.omega;
+current_gear = fullState.currentGear;
+Fz = fullState.Fz;
+alpha = fullState.alpha;
+T = fullState.T;
 
 % generate table of control variable values
 x_accel = [exitflag long_accel x(3)*x(5) x omega(1:4) engine_rpm current_gear beta...
     Fz(1:4) alpha(1:4) T(1:4)];
-[x_table_accel] = generate_table(x_accel);
+[~] = generate_table(x_accel);
 
 long_accel = -fval;
+
+if nargout >= 4
+    diagnostics = struct();
+    diagnostics.state = x;
+    diagnostics.exitflag = exitflag;
+    [diagnostics.c,diagnostics.ceq] = constraint(x);
+    diagnostics.max_inequality_violation = max([diagnostics.c(:);0]);
+    diagnostics.max_equality_residual = max(abs(diagnostics.ceq(:)));
+    diagnostics.metrics = car.metrics(x);
+    diagnostics.pure_ay0 = abs(diagnostics.metrics.gLat) <= 1e-12;
+end
+
+end
+
+function value = getSolverOption(solverOptions,name,default)
+value = default;
+if isfield(solverOptions,name) && ~isempty(solverOptions.(name))
+    value = solverOptions.(name);
+end
+end
