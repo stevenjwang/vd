@@ -1,53 +1,68 @@
 function K_us_scalar_deg_g = understeer_calc_telemetry()
 % Calculates scalar understeer gradient K_us from any time-aligned log containing
-% steer angle, v_x, a_x, a_y, and yaw rate; rename variables as necessary
+% steer angle, v_x, a_x, a_y, and yaw rate assuming constant radius
 
-load("alameda05022026skidpad.mat"); % Skidpad gives best K_us conditions;
-% update as available
+% 1. Load data
+can_log = readtable('2026-10-04_alameda_skidpad_run1_MR2_long(4)_aero_on.csv');
+imu_log = readtable('2026-10-04_alameda_skidpad_run1_MR2_long(4)_aero_on.csv');
 
-% Alias log names for cleaner scripting
-can_log = [Alameda_Skidpad0384LLTD_2026_05_02T20_21_47];
-imu_log = [RaceBoxTrackSessionon02_05_202619_52];
-
-% 1. Extract time vectors
+% 2. Extract time vectors
 t_racebox = imu_log.Time;
 t_canary = can_log.Time;
 
-% 2. Filtered variables
-window_size = 3;
-lat_accel_ms2     = movmedian(imu_log.GForceY * 9.80665, window_size);
-long_accel_ms2    = movmedian(imu_log.GForceX * 9.80665, window_size);
-vx_ms             = movmedian(imu_log.Speed, window_size);
-yaw_rate_rads = movmedian(deg2rad(imu_log.GyroZ), window_size);
+%%
+
+% 3. Filtered variables
+window_size = 5;
+lat_accel_ms2     = movmedian(imu_log.ACCELY * 9.80665, window_size);
+long_accel_ms2    = movmedian(imu_log.ACCELX * 9.80665, window_size);
+vx_ms             = movmedian(imu_log.WheelSpeedRearRight, window_size);
+yaw_rate_rads     = movmedian(deg2rad(imu_log.ANGRATEY), window_size);
 steer_angle       = can_log.STEERINGANGLE;
 
-% 3. Interpolate IMU channels to CANary
-lat_accel_ms2     = interp1(t_racebox, lat_accel_ms2, t_canary, 'linear', 'extrap');
-long_accel_ms2    = interp1(t_racebox, long_accel_ms2, t_canary, 'linear', 'extrap');
-vx_ms             = interp1(t_racebox, vx_ms, t_canary, 'linear', 'extrap');
+% 4. Interpolate IMU channels to CANary
+lat_accel_ms2        = interp1(t_racebox, lat_accel_ms2, t_canary, 'linear', 'extrap');
+long_accel_ms2       = interp1(t_racebox, long_accel_ms2, t_canary, 'linear', 'extrap');
+vx_ms                = interp1(t_racebox, vx_ms, t_canary, 'linear', 'extrap');
 yaw_rate_rads_interp = interp1(t_racebox, yaw_rate_rads, t_canary, 'linear', 'extrap');
-steer_angle_deg   = steer_angle;
+steer_angle_deg      = steer_angle;
 
-% 4. Constants
+% 5. Constants
 wheelbase_m = 1.5742;
 steering_ratio = 4;
 g_ms2 = 9.80665;
 
-% 5. Understeer angle (rad)
+% 6. Understeer angle (rad)
 road_wheel_rad = deg2rad(steer_angle_deg ./ steering_ratio);
 ideal_angle_rad = (wheelbase_m .* lat_accel_ms2) ./ (vx_ms .^ 2);
 understeer_angle_rad = road_wheel_rad - ideal_angle_rad;
 
-% 6. K_us via robustfit with steady-state filters
-yaw_accel = gradient(yaw_rate_rads_interp, t_canary);
+% 7. Enhanced Steady-State Filtering & Robust Fit
+% Derivatives mapped to t_canary
+yaw_accel      = gradient(yaw_rate_rads_interp, t_canary);
+steering_rate  = abs(gradient(steer_angle_deg, t_canary));
+lat_accel_rate = abs(gradient(lat_accel_ms2, t_canary));
 
-cond_speed = vx_ms > 6; % filter out kinematic-dominant states
-cond_ay_min = abs(lat_accel_ms2) > 4; % lower bound of a_y grouping near a_x = 0 from endurance g-g plot
-cond_ay_max = abs(lat_accel_ms2) < 10; % magic tire linear range
-cond_ax_max = abs(long_accel_ms2) < 2; % a_x ~= 0 grouping from endurance g-g plot
-cond_yaw_accel_max = abs(yaw_accel) < 0.5; % filter out transient yaw accel
+% Threshold parameters
+min_speed          = 6.0;   % m/s (~21.6 km/h) - filter out low-speed kinematics
+max_long_accel     = 2;   % m/s^2 - tight bound for near-constant speed (prevents roll-on/braking transients)
+min_lat_accel      = 2.5;   % m/s^2 - lower bound to isolate active loaded cornering
+max_lat_accel      = 16.0;  % m/s^2 - raised ceiling to handle high-g aero/tire limits safely
+max_yaw_accel      = 0.5;   % rad/s^2 - filters transient yaw rotation
+max_steering_rate  = 2.5;   % deg/s - ensures driver hands are steady in the circle
+max_lat_jerk       = 1.0;   % m/s^3 - ensures a_y has physically settled into radius
 
-ss_pts = cond_speed & cond_ax_max & cond_ay_min & cond_ay_max & cond_yaw_accel_max;
+cond_speed      = vx_ms > min_speed;
+cond_ax         = abs(long_accel_ms2) < max_long_accel;
+cond_ay         = (abs(lat_accel_ms2) > min_lat_accel) & (abs(lat_accel_ms2) < max_lat_accel);
+cond_yaw_accel  = abs(yaw_accel) < max_yaw_accel;
+cond_steer_rate = steering_rate < max_steering_rate;
+cond_lat_jerk   = lat_accel_rate < max_lat_jerk;
+
+% Combined mask
+ss_pts = cond_speed & cond_ax & cond_ay & cond_yaw_accel; % & cond_lat_jerk; % & cond_steer_rate;
+
+%%
 
 if sum(ss_pts) > 50
     coeffs = robustfit(lat_accel_ms2(ss_pts), understeer_angle_rad(ss_pts));

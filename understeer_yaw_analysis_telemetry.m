@@ -46,12 +46,13 @@ vx_ms(vx_ms < 0.1) = 0.1;
 road_wheel_rad = deg2rad(steer_angle_deg ./ steering_ratio);
 
 % Calculate Understeer Gradient (K_us) using standalone function (edit
-% params in function)
+% params in function; intentionally uses skidpad for better K_us reading)
 K_us_scalar_deg_g = understeer_calc_telemetry();
 
 % --- Calculate Understeer Angle ---
 % Ideal Ackermann steer angle (rad)
-ideal_angle_rad = (wheelbase_m .* lat_accel_ms2) ./ (vx_ms .^ 2);
+ideal_angle_rad = atan(wheelbase_m .* lat_accel_ms2) ./ (vx_ms .^ 2);
+
 % Understeer angle
 understeer_angle_rad = road_wheel_rad - ideal_angle_rad;
 understeer_angle_deg = rad2deg(understeer_angle_rad);
@@ -74,7 +75,7 @@ yaw_rate_lataccel_deg = rad2deg(lat_accel_ms2 ./ vx_ms);
 % B = a_y / v_x - measured yaw rate
 sideslip_rate_deg = rad2deg(yaw_rate_lataccel_deg - yaw_rate_meas_deg);
 
-%% --- Plots ---
+%%
 
 % Subplot 1: Yaw Rate Overlays
 figure();
@@ -115,6 +116,7 @@ ylabel('GForceY');
 title('GForceY');
 grid on;
 
+%%
 
 % Sideslip Rate of Change (Transient)
 figure();
