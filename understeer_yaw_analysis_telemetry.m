@@ -2,11 +2,9 @@
 load("alameda05042026.mat"); % Load any time-aligned logs with
 % steer angle, v_x, a_x, a_y, and yaw rates; rename logs/channels as necessary
 
-%% --- Vehicle Parameters ---
 steering_ratio = 4.0;
 wheelbase_m = 1.5742;   
 
-%% --- Data Extraction & Interpolation ---
 % 1. Alias log names from mat file
 can_log = [rotortemp_fullendurance_05_04_2026_1];
 imu_log = [RaceBoxTrackSessionon04_05_202605_46];
@@ -39,8 +37,6 @@ yaw_rate_meas_deg = rad2deg(interp1(time_imu, yaw_rate_rads, time_can, 'linear',
 
 % Prevent divide-by-zero errors in speed-dependent calculations
 vx_ms(vx_ms < 0.1) = 0.1;
-
-%% --- Understeer & Theoretical Yaw Calculations (Steady-State Approximations) ---
 
 % Convert road wheel angle to radians for calculation
 road_wheel_rad = deg2rad(steer_angle_deg ./ steering_ratio);

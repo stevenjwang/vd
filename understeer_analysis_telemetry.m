@@ -3,7 +3,6 @@
 
 clear; clc; close all;
 
-%% --- 1. Load Data & Define Constants ---
 load('alameda05042026.mat'); 
 
 steering_ratio = 4.0;    % Steering gear ratio
@@ -12,7 +11,6 @@ g_ms2          = 9.80665;% Gravity [m/s^2]
 a_dist_m       = 0.80;   % Distance from CG to front axle [m] (Estimated for vehicle geometry)
 b_dist_m       = wheelbase_m - a_dist_m; % Distance from CG to rear axle [m]
 
-%% --- 2. Data Extraction & Signal Conditioning ---
 can_log = rotortemp_fullendurance_05_04_2026_1;
 imu_log = RaceBoxTrackSessionon04_05_202605_46;
 
@@ -51,7 +49,6 @@ road_wheel_deg    = steer_angle_deg ./ steering_ratio;
 road_wheel_rad    = deg2rad(road_wheel_deg);
 yaw_rate_meas_rad = deg2rad(yaw_rate_meas_deg);
 
-%% --- 3. Understeer Gradient & Multi-Model Yaw Overlays ---
 % Extract steady-state understeer gradient K_us from skidpad
 K_us_scalar_deg_g = understeer_gradient_telemetry(); 
 K_us_scalar_SI    = deg2rad(K_us_scalar_deg_g) / g_ms2; % [rad / (m/s^2)]
@@ -66,7 +63,6 @@ ideal_yaw_rate_deg = rad2deg((vx_ms .* road_wheel_rad) ./ (wheelbase_m + (K_us_s
 % 3. Lateral Acceleration Equivalent Yaw Rate (Steady-State Trajectory r = a_y / v_x)
 yaw_rate_lataccel_deg = rad2deg(lat_accel_ms2 ./ vx_ms);
 
-%% --- 4. Sideslip Angle (\beta) & Sideslip Rate (\dot{\beta}) ---
 % Kinetic Sideslip Rate: \dot{\beta} = (a_y / v_x) - r [rad/s]
 sideslip_rate_rads = (lat_accel_ms2 ./ vx_ms) - yaw_rate_meas_rad;
 sideslip_rate_degs = rad2deg(sideslip_rate_rads);
@@ -83,8 +79,6 @@ sideslip_angle_deg = rad2deg(filtfilt(b_hp, a_hp, raw_sideslip_rad));
 
 % Steady-state baseline sideslip angle \beta_ss for comparison
 sideslip_ss_deg = rad2deg((b_dist_m / wheelbase_m) .* road_wheel_rad - (a_dist_m .* lat_accel_ms2) ./ (vx_ms.^2));
-
-%% --- 5. Time Lags, Gains, & Transient Responses ---
 
 % --- A. Sensitivity Gains / Ratios ---
 safe_steer_deg = steer_angle_deg;
@@ -168,8 +162,6 @@ if ~isempty(steer_transient_peaks)
 else
     t_ev = []; T_90_yaw = NaN; T_90_lat = NaN; overshoot_yaw_pct = NaN; overshoot_lat_pct = NaN;
 end
-
-%% --- 6. Visualizations ---
 
 % --- Figure 1: Time-Domain Overlays & Sideslip Dynamics ---
 figure('Name', 'Dynamic Responses & Sideslip');
@@ -331,7 +323,6 @@ grid on;
 view(-40, 25); 
 axis tight;
 
-%% --- Figure 7: Sideslip Dynamics vs. Lateral Acceleration ---
 figure('Name', 'Sideslip vs. Lateral Acceleration');
 
 % Subplot 1: Integrated & Theoretical Sideslip Angle vs. Lat Accel (g)
